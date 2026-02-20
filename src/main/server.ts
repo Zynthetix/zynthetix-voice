@@ -17,9 +17,11 @@ export function startServer(store: { get: (k: string) => unknown; set: (k: strin
   const app = express()
   app.use(cors()); app.use(express.json())
 
-  // Static dashboard in production
-  const staticPath = path.join(__dirname, '../renderer/src/dashboard')
-  app.use(express.static(staticPath))
+  // Serve dist/renderer as root (assets live at /assets/)
+  const rendererPath = path.join(__dirname, '../renderer')
+  app.use(express.static(rendererPath))
+  // Dashboard index
+  app.get('/', (_req, res) => res.sendFile(path.join(rendererPath, 'src/dashboard/index.html')))
 
   // ── Settings ──────────────────────────────────────────────────────────────
   app.get('/api/settings', (_req, res) => {
