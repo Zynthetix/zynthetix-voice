@@ -12,8 +12,9 @@ const store = new Store<{ deepgramApiKey: string; language: string; model: strin
 
 let pillWindow: BrowserWindow | null = null
 let tray: Tray | null = null
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let deepgramConnection: any = null
+let deepgramReady = false          // true only after Deepgram 'open' fires
+const audioQueue: Buffer[] = []    // buffer audio until Deepgram is ready
 let isRecording = false
 let recordingStartTime = 0
 let sessionWords = 0
@@ -61,8 +62,13 @@ function createTray() {
 
 // ─── IPC ─────────────────────────────────────────────────────────────────────
 ipcMain.on('audio-chunk', (_e, chunk: ArrayBuffer) => {
-  if (deepgramConnection && isRecording) {
-    try { deepgramConnection.send(Buffer.from(chunk)) } catch {}
+  if (!isRecording) return
+  const buf = Buffer.from(chunk)
+  if (deepgramReady && deepgramConnection) {
+    try { deepgramConnection.send(buf) } catch {}
+  } else {
+    audioQueue.push(buf)
+    if (audioQueue.length > 80) audioQueue.shift() // cap buffer ~5s
   }
 })
 
@@ -112,6 +118,14 @@ async function startRecording() {
   const language = (store.get('language') as string) || 'en'
   const model = (store.get('model') as string) || 'nova-3'
   const client = createClient(apiKey)
+
+  // ── Activate UI immediately — don't wait for Deepgram WebSocket ──
+  isRecording = true; recordingStartTime = Date.now(); sessionWords = 0
+  deepgramReady = false; audioQueue.length = 0
+  pillWindow?.webContents.send('state-change', { state: 'recording' })
+  pillWindow?.webContents.send('start-audio-capture')
+  pillWindow?.webContents.send('play-sound', 'start')
+
   try {
     deepgramConnection = client.listen.live({
       model, language, smart_format: true, interim_results: true,
@@ -122,10 +136,12 @@ async function startRecording() {
 
     deepgramConnection.on('open', () => {
       console.log('Deepgram connected')
-      isRecording = true; recordingStartTime = Date.now(); sessionWords = 0
-      pillWindow?.webContents.send('state-change', { state: 'recording' })
-      pillWindow?.webContents.send('start-audio-capture')
-      pillWindow?.webContents.send('play-sound', 'start')
+      deepgramReady = true
+      // Flush buffered audio captured before connection was ready
+      for (const buf of audioQueue) {
+        try { deepgramConnection.send(buf) } catch {}
+      }
+      audioQueue.length = 0
     })
 
     deepgramConnection.on('Results', (data: unknown) => {
@@ -162,7 +178,7 @@ async function startRecording() {
 
 function stopRecording() {
   if (!isRecording) return
-  isRecording = false
+  isRecording = false; deepgramReady = false; audioQueue.length = 0
   pillWindow?.webContents.send('stop-audio-capture')
   pillWindow?.webContents.send('play-sound', 'stop')
   pillWindow?.webContents.send('state-change', { state: 'idle' })
