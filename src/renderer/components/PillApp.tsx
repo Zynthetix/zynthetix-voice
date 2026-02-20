@@ -194,6 +194,7 @@ export default function PillApp() {
         display:'flex', alignItems:'center', justifyContent:'center',
         WebkitAppRegion:'drag',
         animation:'mountIn 0.35s cubic-bezier(0.34,1.56,0.64,1)',
+        background: 'transparent',
       } as React.CSSProperties}
         onContextMenu={e => { e.preventDefault(); window.electronAPI.showContextMenu() }}>
 

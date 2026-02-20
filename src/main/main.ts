@@ -33,6 +33,7 @@ function createPillWindow() {
     x, y, width: 280, height: 68,
     frame: false, transparent: true, resizable: false,
     alwaysOnTop: true, hasShadow: false, skipTaskbar: true,
+    backgroundColor: '#00000000',
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
     vibrancy: undefined,
   })
