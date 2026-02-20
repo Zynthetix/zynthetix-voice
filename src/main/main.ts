@@ -186,9 +186,11 @@ const DOUBLE_TAP_WINDOW = 350, HOLD_THRESHOLD = 400
 
 uIOhook.on('keydown', (e) => {
   if (e.keycode !== UiohookKey.AltRight) return
-  if (holdTimer) return // already holding
+  if (isHoldMode) return // already in hold mode, ignore repeats
+  // Clear previous hold timer — each keydown resets it (handles double-tap)
+  if (holdTimer) { clearTimeout(holdTimer); holdTimer = null }
   holdTimer = setTimeout(() => {
-    isHoldMode = true
+    isHoldMode = true; holdTimer = null
     if (!isRecording) startRecording()
   }, HOLD_THRESHOLD)
   if (!tapTimer) {
@@ -196,7 +198,8 @@ uIOhook.on('keydown', (e) => {
   }
   tapCount++
   if (tapCount >= 2) {
-    tapCount = 0; if (tapTimer) { clearTimeout(tapTimer); tapTimer = null }
+    tapCount = 0
+    if (tapTimer) { clearTimeout(tapTimer); tapTimer = null }
     if (holdTimer) { clearTimeout(holdTimer); holdTimer = null }
     RecordingController.toggleRecording()
   }
