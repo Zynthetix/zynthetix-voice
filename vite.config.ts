@@ -11,6 +11,7 @@ export default defineConfig({
       input: {
         pill: path.resolve(__dirname, 'src/renderer/pill.html'),
         settings: path.resolve(__dirname, 'src/renderer/settings.html'),
+        dashboard: path.resolve(__dirname, 'src/dashboard/index.html'),
       }
     }
   },

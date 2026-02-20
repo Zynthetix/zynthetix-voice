@@ -1,332 +1,226 @@
-import { app, BrowserWindow, clipboard, ipcMain, Menu, nativeImage, Tray } from 'electron'
+import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, clipboard, dialog, shell } from 'electron'
 import path from 'path'
-import { execSync, spawnSync } from 'child_process'
+import { spawnSync } from 'child_process'
 import Store from 'electron-store'
-
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { createClient, LiveTranscriptionEvents } = require('@deepgram/sdk')
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { uIOhook, UiohookKey } = require('uiohook-napi')
-
-interface StoreSchema {
-  apiKey: string
-  language: string
-  pillPosition: { x: number; y: number }
-}
-
-const store = new Store<StoreSchema>({
-  defaults: {
-    apiKey: '',
-    language: 'en-US',
-    pillPosition: { x: 0, y: 20 },
-  },
-})
-
-let pillWindow: BrowserWindow | null = null
-let settingsWindow: BrowserWindow | null = null
-let tray: Tray | null = null
-let isRecording = false
-let isHoldMode = false                  // true = started via hold (release = stop)
-let deepgramConnection: ReturnType<typeof createClient> | null = null
-
-// Right Option key double-tap / hold detection state
-let fnPressCount = 0
-let fnPressTimer: ReturnType<typeof setTimeout> | null = null
-let fnHoldTimer: ReturnType<typeof setTimeout> | null = null
-
-const FN_DOUBLE_TAP_WINDOW = 350   // ms between taps to count as double
-const FN_HOLD_THRESHOLD    = 400   // ms held before activating hold-mode (shorter = snappier)
+import { createClient } from '@deepgram/sdk'
+import { uIOhook, UiohookKey } from 'uiohook-napi'
+import { insertHistory, applySnippets, incrementStats } from './db'
+import { startServer, broadcast, DASHBOARD_PORT } from './server'
 
 const isDev = process.env.NODE_ENV === 'development'
+const store = new Store<{ deepgramApiKey: string; language: string; model: string; pillX: number; pillY: number }>()
 
-function getRendererUrl(page: string): string {
-  if (isDev) {
-    return `http://localhost:5173/src/renderer/${page}.html`
-  }
-  return `file://${path.join(__dirname, `../renderer/src/renderer/${page}.html`)}`
+let pillWindow: BrowserWindow | null = null
+let tray: Tray | null = null
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let deepgramConnection: any = null
+let isRecording = false
+let recordingStartTime = 0
+let sessionWords = 0
+
+// ─── Window helpers ───────────────────────────────────────────────────────────
+function pillHtmlPath(page: string) {
+  if (isDev) return `http://localhost:5173/src/renderer/${page}.html`
+  return path.join(__dirname, `../../renderer/src/renderer/${page}.html`)
 }
 
 function createPillWindow() {
-  const savedPos = store.get('pillPosition') as { x: number; y: number } | undefined
-
+  const { width } = require('electron').screen.getPrimaryDisplay().workAreaSize
+  const x = (store.get('pillX') as number) ?? (width - 280)
+  const y = (store.get('pillY') as number) ?? 20
   pillWindow = new BrowserWindow({
-    width: 240,
-    height: 60,
-    frame: false,
-    transparent: true,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    resizable: false,
-    movable: true,
-    hasShadow: false,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
+    x, y, width: 280, height: 68,
+    frame: false, transparent: true, resizable: false,
+    alwaysOnTop: true, hasShadow: false, skipTaskbar: true,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    vibrancy: undefined,
   })
-
+  pillWindow.setAlwaysOnTop(true, 'screen-saver')
+  pillWindow.loadURL(isDev ? `http://localhost:5173/src/renderer/pill.html` : `file://${path.join(__dirname, '../../renderer/src/renderer/pill.html')}`)
   pillWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-  pillWindow.loadURL(getRendererUrl('pill'))
-
-  // Position: saved position or default top-right
-  const { screen } = require('electron')
-  const display = screen.getPrimaryDisplay()
-  const { width } = display.workAreaSize
-  const x = savedPos?.x ?? width - 260
-  const y = savedPos?.y ?? 20
-  pillWindow.setPosition(x, y)
-
-  // Save position when window is moved
   pillWindow.on('moved', () => {
-    const [px, py] = pillWindow!.getPosition()
-    store.set('pillPosition', { x: px, y: py })
+    if (!pillWindow) return
+    const [px, py] = pillWindow.getPosition()
+    store.set('pillX', px); store.set('pillY', py)
   })
-}
-
-function createSettingsWindow() {
-  if (settingsWindow) {
-    settingsWindow.focus()
-    return
-  }
-
-  settingsWindow = new BrowserWindow({
-    width: 480,
-    height: 400,
-    title: 'Zynthetix Voice — Settings',
-    resizable: false,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  })
-
-  settingsWindow.loadURL(getRendererUrl('settings'))
-  settingsWindow.on('closed', () => { settingsWindow = null })
 }
 
 function createTray() {
-  // Create a simple 16x16 tray icon programmatically
-  const trayIcon = nativeImage.createFromDataURL(
-    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAdgAAAHYBTnsmCAAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAAGRSURBVDiNpZM9SwNBEIafvYuJuSSKQcHGSrCxsLGwELSwECysLCwULCwULCwULCwUFBQUgoWFhYKCgYGBgoWFhYKBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgX+BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGB'
-  )
-
-  tray = new Tray(trayIcon)
-  updateTrayMenu()
-}
-
-function updateTrayMenu() {
-  if (!tray) return
-  const menu = Menu.buildFromTemplate([
-    {
-      label: isRecording ? '🔴 Stop Recording' : '🎤 Start Recording',
-      click: toggleRecording,
-    },
+  const icon = nativeImage.createEmpty()
+  tray = new Tray(icon)
+  tray.setTitle('🎙')
+  tray.setToolTip('Zynthetix Voice')
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Open Dashboard', click: () => shell.openExternal(`http://localhost:${DASHBOARD_PORT}`) },
     { type: 'separator' },
-    { label: 'Settings', click: createSettingsWindow },
+    { label: 'Toggle Recording', click: () => RecordingController.toggleRecording() },
     { type: 'separator' },
     { label: 'Quit', click: () => app.quit() },
-  ])
-  tray.setContextMenu(menu)
-  tray.setToolTip(isRecording ? 'Zynthetix Voice — Recording' : 'Zynthetix Voice')
+  ]))
 }
 
-async function startRecording() {
-  const apiKey = store.get('apiKey') as string
-  if (!apiKey) {
-    pillWindow?.webContents.send('state-change', { state: 'error', message: 'No API key set' })
-    createSettingsWindow()
-    return
+// ─── IPC ─────────────────────────────────────────────────────────────────────
+ipcMain.on('audio-chunk', (_e, chunk: ArrayBuffer) => {
+  if (deepgramConnection && isRecording) {
+    try { deepgramConnection.send(Buffer.from(chunk)) } catch {}
   }
+})
 
-  isRecording = true
-  pillWindow?.webContents.send('state-change', { state: 'recording' })
-  updateTrayMenu()
-
-  try {
-    const deepgram = createClient(apiKey)
-    deepgramConnection = deepgram.listen.live({
-      model: 'nova-3',
-      language: store.get('language') as string,
-      smart_format: true,
-      interim_results: true,
-      utterance_end_ms: 1000,
-      endpointing: 10,
-      diarize: true,
-      punctuate: true,
-      profanity_filter: true,
-      vad_events: true,
-      dictation: true,
-      numerals: true,
-      encoding: 'linear16',
-      sample_rate: 16000,
-      channels: 1,
-    })
-
-    deepgramConnection.on(LiveTranscriptionEvents.Open, () => {
-      console.log('Deepgram connected')
-    })
-
-    deepgramConnection.on(LiveTranscriptionEvents.Transcript, (data: {
-      channel: { alternatives: { transcript: string; words: { speaker?: number }[] }[] }
-      is_final: boolean
-      type?: string
-    }) => {
-      // Skip non-transcript events
-      if (data.type === 'SpeechStarted' || data.type === 'UtteranceEnd') return
-      const transcript = data?.channel?.alternatives?.[0]?.transcript
-      // Only type on final results to avoid duplicate/overwriting interim text
-      if (transcript && data.is_final) {
-        pillWindow?.webContents.send('transcript', { text: transcript })
-        typeText(transcript + ' ')
-      }
-    })
-
-    deepgramConnection.on(LiveTranscriptionEvents.Error, (err: Error) => {
-      console.error('Deepgram error:', err)
-      stopRecording()
-    })
-
-    // Tell renderer to start capturing audio
-    pillWindow?.webContents.send('start-audio-capture')
-  } catch (err) {
-    console.error('Failed to start recording:', err)
-    stopRecording()
-  }
-}
-
-function stopRecording() {
-  isRecording = false
-  pillWindow?.webContents.send('state-change', { state: 'idle' })
-  pillWindow?.webContents.send('stop-audio-capture')
-  updateTrayMenu()
-
-  if (deepgramConnection) {
-    deepgramConnection.finish()
-    deepgramConnection = null
-  }
-}
-
-function toggleRecording() {
-  if (isRecording) {
-    stopRecording()
-  } else {
-    startRecording()
-  }
-}
-
-function typeText(text: string) {
-  try {
-    // Save previous clipboard, write transcript, paste, then restore
-    const prev = clipboard.readText()
-    clipboard.writeText(text)
-    spawnSync('osascript', ['-e', 'tell application "System Events" to keystroke "v" using {command down}'])
-    setTimeout(() => clipboard.writeText(prev), 300)
-  } catch (err) {
-    console.error('Failed to paste text:', err)
-  }
-}
-
-// IPC handlers
 ipcMain.on('show-context-menu', () => {
+  if (!pillWindow) return
   const menu = Menu.buildFromTemplate([
-    {
-      label: isRecording ? '⏹  Stop Recording' : '🎤  Start Recording',
-      click: toggleRecording,
-    },
+    { label: isRecording ? 'Stop Recording' : 'Start Recording', click: () => RecordingController.toggleRecording() },
+    { label: 'Open Dashboard', click: () => shell.openExternal(`http://localhost:${DASHBOARD_PORT}`) },
     { type: 'separator' },
-    { label: '⚙️  Settings', click: createSettingsWindow },
-    { type: 'separator' },
-    { label: '✕  Quit', click: () => app.quit() },
+    { label: 'Quit', click: () => app.quit() },
   ])
   menu.popup({ window: pillWindow! })
 })
 
-ipcMain.on('audio-chunk', (_event, chunk: ArrayBuffer) => {
-  if (deepgramConnection && isRecording) {
-    deepgramConnection.send(chunk)
-  }
+ipcMain.on('final-transcript-for-stats', (_e, { wordCount }: { wordCount: number }) => {
+  sessionWords += wordCount
 })
 
 ipcMain.handle('get-settings', () => ({
-  apiKey: store.get('apiKey'),
-  shortcut: store.get('shortcut'),
-  language: store.get('language'),
+  deepgramApiKey: store.get('deepgramApiKey'),
+  language: store.get('language') || 'en',
+  model: store.get('model') || 'nova-3',
 }))
 
-ipcMain.handle('save-settings', (_event, settings: Partial<StoreSchema>) => {
-  if (settings.apiKey !== undefined) store.set('apiKey', settings.apiKey)
-  if (settings.language !== undefined) store.set('language', settings.language)
-  return true
+ipcMain.handle('save-settings', (_e, s: { deepgramApiKey?: string; language?: string; model?: string }) => {
+  if (s.deepgramApiKey) store.set('deepgramApiKey', s.deepgramApiKey)
+  if (s.language) store.set('language', s.language)
+  if (s.model) store.set('model', s.model)
+  return { ok: true }
 })
 
-ipcMain.on('open-settings', () => createSettingsWindow())
-
-function setupFnKey() {
-  // Right Option (⌥ right) key — works reliably on all Macs, no conflicts
-  // keycode 3640 = UiohookKey.AltRight
-  const TRIGGER_KEY = UiohookKey.AltRight // 3640
-
-  uIOhook.on('keydown', (e: { keycode: number }) => {
-    if (e.keycode !== TRIGGER_KEY) return
-
-    fnPressCount++
-
-    // Hold timer: if key stays down > threshold → push-to-talk mode
-    if (fnHoldTimer) clearTimeout(fnHoldTimer)
-    fnHoldTimer = setTimeout(() => {
-      fnPressCount = 0
-      if (fnPressTimer) { clearTimeout(fnPressTimer); fnPressTimer = null }
-      if (!isRecording) {
-        isHoldMode = true
-        startRecording()
-      }
-    }, FN_HOLD_THRESHOLD)
-
-    // Double-tap window: two presses within window → toggle
-    if (fnPressTimer) clearTimeout(fnPressTimer)
-    fnPressTimer = setTimeout(() => {
-      const count = fnPressCount
-      fnPressCount = 0
-      fnPressTimer = null
-      if (count >= 2) {
-        if (fnHoldTimer) { clearTimeout(fnHoldTimer); fnHoldTimer = null }
-        if (!isHoldMode) toggleRecording()
-      }
-    }, FN_DOUBLE_TAP_WINDOW)
-  })
-
-  uIOhook.on('keyup', (e: { keycode: number }) => {
-    if (e.keycode !== TRIGGER_KEY) return
-    if (fnHoldTimer) { clearTimeout(fnHoldTimer); fnHoldTimer = null }
-    // Release in hold-mode → stop recording
-    if (isHoldMode && isRecording) {
-      isHoldMode = false
-      stopRecording()
-    }
-  })
-
-  uIOhook.start()
+// ─── Text injection ────────────────────────────────────────────────────────────
+function typeText(text: string) {
+  if (!text.trim()) return
+  clipboard.writeText(text)
+  spawnSync('osascript', ['-e', 'tell application "System Events" to keystroke "v" using {command down}'])
 }
 
-app.whenReady().then(() => {
-  app.dock?.hide()
+// ─── Deepgram ─────────────────────────────────────────────────────────────────
+async function startRecording() {
+  const apiKey = store.get('deepgramApiKey') as string
+  if (!apiKey) {
+    dialog.showMessageBox({ type: 'warning', title: 'API Key Missing', message: 'Please set your Deepgram API key in the dashboard.', buttons: ['Open Dashboard', 'OK'] })
+      .then(r => { if (r.response === 0) shell.openExternal(`http://localhost:${DASHBOARD_PORT}`) })
+    return
+  }
+  const language = (store.get('language') as string) || 'en'
+  const model = (store.get('model') as string) || 'nova-3'
+  const client = createClient(apiKey)
+  try {
+    deepgramConnection = client.listen.live({
+      model, language, smart_format: true, interim_results: true,
+      utterance_end_ms: 1000, endpointing: 10,
+      punctuate: true, profanity_filter: false,
+      diarize: false, vad_events: true, encoding: 'linear16', sample_rate: 16000,
+    })
 
+    deepgramConnection.on('open', () => {
+      console.log('Deepgram connected')
+      isRecording = true; recordingStartTime = Date.now(); sessionWords = 0
+      pillWindow?.webContents.send('state-change', { state: 'recording' })
+      pillWindow?.webContents.send('start-audio-capture')
+      pillWindow?.webContents.send('play-sound', 'start')
+    })
+
+    deepgramConnection.on('Results', (data: unknown) => {
+      const result = data as { channel: { alternatives: { transcript: string }[] }; is_final: boolean; speech_final: boolean }
+      const transcript = result?.channel?.alternatives?.[0]?.transcript
+      if (!transcript) return
+      if (result.is_final && result.speech_final) {
+        const expanded = applySnippets(transcript)
+        typeText(expanded)
+        pillWindow?.webContents.send('transcript', { text: expanded })
+        const wc = expanded.trim().split(/\s+/).filter(Boolean).length
+        const durSec = Math.round((Date.now() - recordingStartTime) / 1000)
+        insertHistory(expanded, wc, durSec)
+        broadcast({ type: 'history-item', item: { text: expanded, word_count: wc, duration_sec: durSec, created_at: new Date().toISOString() } })
+      } else if (!result.is_final) {
+        pillWindow?.webContents.send('interim-transcript', { text: transcript })
+      }
+    })
+
+    deepgramConnection.on('error', (err: unknown) => {
+      console.error('Deepgram error:', err)
+      pillWindow?.webContents.send('state-change', { state: 'error', message: 'Connection error' })
+      isRecording = false
+    })
+
+    deepgramConnection.on('close', () => {
+      isRecording = false
+    })
+  } catch (err) {
+    console.error('Failed to start recording:', err)
+    pillWindow?.webContents.send('state-change', { state: 'error', message: String(err) })
+  }
+}
+
+function stopRecording() {
+  if (!isRecording) return
+  isRecording = false
+  pillWindow?.webContents.send('stop-audio-capture')
+  pillWindow?.webContents.send('play-sound', 'stop')
+  pillWindow?.webContents.send('state-change', { state: 'idle' })
+  const secs = Math.round((Date.now() - recordingStartTime) / 1000)
+  if (sessionWords > 0 || secs > 1) incrementStats(sessionWords, secs)
+  try { deepgramConnection?.finish() } catch {}
+  deepgramConnection = null
+}
+
+// ─── Recording controller ─────────────────────────────────────────────────────
+const RecordingController = {
+  toggleRecording() {
+    if (isRecording) stopRecording(); else startRecording()
+  }
+}
+
+// ─── uiohook hotkey (Right Option = double-tap toggle, hold = push-to-talk) ──
+let tapCount = 0, tapTimer: NodeJS.Timeout | null = null
+let holdTimer: NodeJS.Timeout | null = null, isHoldMode = false
+const DOUBLE_TAP_WINDOW = 350, HOLD_THRESHOLD = 400
+
+uIOhook.on('keydown', (e) => {
+  if (e.keycode !== UiohookKey.AltRight) return
+  if (holdTimer) return // already holding
+  holdTimer = setTimeout(() => {
+    isHoldMode = true
+    if (!isRecording) startRecording()
+  }, HOLD_THRESHOLD)
+  if (!tapTimer) {
+    tapTimer = setTimeout(() => { tapCount = 0; tapTimer = null }, DOUBLE_TAP_WINDOW)
+  }
+  tapCount++
+  if (tapCount >= 2) {
+    tapCount = 0; if (tapTimer) { clearTimeout(tapTimer); tapTimer = null }
+    if (holdTimer) { clearTimeout(holdTimer); holdTimer = null }
+    RecordingController.toggleRecording()
+  }
+})
+
+uIOhook.on('keyup', (e) => {
+  if (e.keycode !== UiohookKey.AltRight) return
+  if (holdTimer) { clearTimeout(holdTimer); holdTimer = null }
+  if (isHoldMode) { isHoldMode = false; if (isRecording) stopRecording() }
+})
+
+// ─── App lifecycle ─────────────────────────────────────────────────────────────
+app.whenReady().then(() => {
   createPillWindow()
   createTray()
-  setupFnKey()
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createPillWindow()
-  })
+  startServer(store as unknown as { get: (k: string) => unknown; set: (k: string, v: unknown) => void })
+  uIOhook.start()
 })
 
 app.on('window-all-closed', () => {
-  // Keep running in background (menu bar app)
+  if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('will-quit', () => {
+app.on('before-quit', () => {
   uIOhook.stop()
-  if (deepgramConnection) deepgramConnection.finish()
+  try { deepgramConnection?.finish() } catch {}
 })

@@ -1,19 +1,16 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  onStateChange: (cb: (data: { state: string; message?: string }) => void) =>
-    ipcRenderer.on('state-change', (_e, data) => cb(data)),
-  onTranscript: (cb: (data: { text: string }) => void) =>
-    ipcRenderer.on('transcript', (_e, data) => cb(data)),
-  onStartAudioCapture: (cb: () => void) =>
-    ipcRenderer.on('start-audio-capture', () => cb()),
-  onStopAudioCapture: (cb: () => void) =>
-    ipcRenderer.on('stop-audio-capture', () => cb()),
-  sendAudioChunk: (chunk: ArrayBuffer) =>
-    ipcRenderer.send('audio-chunk', chunk),
-  openSettings: () => ipcRenderer.send('open-settings'),
-  showContextMenu: () => ipcRenderer.send('show-context-menu'),
-  getSettings: () => ipcRenderer.invoke('get-settings'),
-  saveSettings: (settings: { apiKey?: string; shortcut?: string; language?: string }) =>
-    ipcRenderer.invoke('save-settings', settings),
+  onStateChange:       (cb: (d: { state: string; message?: string }) => void) => ipcRenderer.on('state-change', (_e, d) => cb(d)),
+  onTranscript:        (cb: (d: { text: string }) => void) => ipcRenderer.on('transcript', (_e, d) => cb(d)),
+  onInterimTranscript: (cb: (d: { text: string }) => void) => ipcRenderer.on('interim-transcript', (_e, d) => cb(d)),
+  onStartAudioCapture: (cb: () => void) => ipcRenderer.on('start-audio-capture', () => cb()),
+  onStopAudioCapture:  (cb: () => void) => ipcRenderer.on('stop-audio-capture', () => cb()),
+  onPlaySound:         (cb: (type: 'start' | 'stop') => void) => ipcRenderer.on('play-sound', (_e, t) => cb(t)),
+  sendAudioChunk:      (chunk: ArrayBuffer) => ipcRenderer.send('audio-chunk', chunk),
+  sendFinalStats:      (d: { wordCount: number }) => ipcRenderer.send('final-transcript-for-stats', d),
+  openSettings:        () => ipcRenderer.send('open-settings'),
+  showContextMenu:     () => ipcRenderer.send('show-context-menu'),
+  getSettings:         () => ipcRenderer.invoke('get-settings'),
+  saveSettings:        (s: object) => ipcRenderer.invoke('save-settings', s),
 })

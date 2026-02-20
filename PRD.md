@@ -3,79 +3,132 @@
 ## Product Overview
 A WisprFlow-like macOS speech-to-text app that inserts transcribed text wherever the user's cursor is. Features a floating always-on-top pill widget with audio visualization, powered by Deepgram's real-time streaming API.
 
-## Core Requirements
+---
 
-### Platform & Stack
+## v1 — Shipped ✅
+
+### Stack
 - **Platform:** macOS only
 - **Tech:** Electron + React + TypeScript
-- **STT Engine:** Deepgram API (real-time streaming with built-in smart formatting)
-- **Text Insertion:** macOS Accessibility API (simulate keystrokes — works in any app)
-- **Language:** English only (MVP)
+- **STT Engine:** Deepgram API (nova-3, real-time streaming, smart formatting)
+- **Text Insertion:** Clipboard + Cmd+V (works in any app)
+- **Language:** English only
 
-### UI/UX
-- **Floating Pill Widget:** Always-on-top, dark theme with accent color (purple/blue), shows animated waveform/pulse when recording, static mic icon when idle
-- **Menu Bar (Tray) Icon:** Quick access to settings, toggle recording, quit
-- **Settings Window:** API key input, keyboard shortcut config, language selection
-- **Activation:** Global keyboard shortcut (default: Cmd+Shift+Space)
+### Features Shipped
+- Floating always-on-top pill widget (dark theme, purple/blue accent)
+- Animated waveform (28 bars, real frequency data while recording, breathing idle animation)
+- Right Option key: double-tap = toggle, hold = push-to-talk
+- macOS Accessibility API keystroke injection
+- Menu bar tray icon (toggle, settings, quit)
+- Settings window (API key, language)
+- Position persistence (drag pill anywhere, remembered on relaunch)
+- Right-click context menu on pill
 
-### Core Functionality
-1. **Global Hotkey** → toggles recording on/off from any app
-2. **Audio Capture** → capture microphone input via Web Audio API / node-audio
-3. **Real-time Streaming** → stream audio to Deepgram, get transcription back in real-time
-4. **Smart Formatting** → Deepgram's built-in: auto-punctuation, filler word removal, smart casing
-5. **Keystroke Injection** → use macOS Accessibility API to type transcribed text at cursor position in any app
-6. **Audio Visualization** → animated waveform/pulse in the floating pill during recording
+---
 
-### Permissions Required
-- **Microphone Access** — for audio capture
-- **Accessibility Access** — for keystroke injection into other apps
-- **Screen Recording** (optional) — may be needed for some cursor position detection
+## v2 — In Development 🚧
+
+### New Architecture
+The Electron settings window is **replaced** with a full web dashboard served on a local port (`localhost:7789`). Port is printed clearly in terminal on launch. The dashboard provides all customization and monitoring in a rich browser UI.
+
+### v2 Features
+
+#### 1. Live Interim Text in Pill
+- While speaking, Deepgram `interim_results` appear greyed-out in the pill
+- Only final, clean transcript gets pasted to cursor
+- Pill shows a ghost preview of what's being transcribed in real-time
+
+#### 2. Transcription History
+- Every final transcript saved with timestamp, word count, duration
+- Viewable in dashboard History tab
+- One-click copy button per entry
+- Stored in `userData/history.json`, capped at 1000 entries
+
+#### 3. Snippets / Text Shortcuts
+- User defines trigger phrases → expansion text
+- Example: "my email" → "karthik@zynthetix.com"
+- After each final transcript, triggers are matched and auto-replaced before pasting
+- Managed in dashboard Snippets tab
+
+#### 4. Sound Feedback
+- Soft start beep when recording begins
+- Soft stop click when recording ends
+- Generated via Web Audio API (no audio files needed)
+
+#### 5. Usage Stats
+- Total words dictated, total sessions, total recording time
+- Estimated Deepgram API cost (based on audio duration @ $0.0059/min for nova-3)
+- Shown in dashboard Stats tab, reset button available
+
+#### 6. Bigger Pill + Dramatic Glow
+- Pill scale-up animation when recording starts
+- More intense multi-layered box-shadow glow
+- Pulsing ring effect around pill while recording
+
+### Web Dashboard (`localhost:7789`)
+Single-page React app served by Express inside the Electron main process.
+Real-time updates via WebSocket.
+
+**Tabs:**
+- **Settings** — API key, language, dashboard port
+- **Snippets** — Add/edit/delete trigger→expansion pairs
+- **History** — Live feed of all dictations, search, copy, clear
+- **Stats** — Words, sessions, time, cost estimate
+
+### WebSocket Events (`ws://localhost:7789`)
+```
+server → client:
+  { type: 'status', recording: boolean }
+  { type: 'interim', text: string }
+  { type: 'final', text: string, wordCount: number }
+  { type: 'history_update', entry: HistoryEntry }
+  { type: 'stats_update', stats: Stats }
+```
+
+### REST API
+```
+GET/POST  /api/settings
+GET/POST/PUT/DELETE  /api/snippets
+GET/DELETE  /api/history
+GET  /api/stats
+POST /api/stats/reset
+```
+
+---
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────┐
 │  Electron Main Process                  │
-│  ├─ Global shortcut registration        │
-│  ├─ Tray/menu bar management            │
-│  ├─ Accessibility API (keystroke inject) │
-│  ├─ Settings store (electron-store)     │
-│  └─ Audio capture (mic → PCM stream)    │
+│  ├─ uiohook (Right Option key)          │
+│  ├─ Tray/menu bar                       │
+│  ├─ Deepgram WebSocket (STT)            │
+│  ├─ Snippets matching                   │
+│  ├─ History & stats persistence         │
+│  └─ Express + WebSocket server :7789    │
 ├─────────────────────────────────────────┤
-│  Electron Renderer (React + TS)         │
-│  ├─ Floating pill window (BrowserWindow)│
-│  ├─ Audio waveform visualization        │
-│  ├─ Settings window                     │
-│  └─ State management                   │
+│  Electron Renderer                      │
+│  └─ Floating pill (always-on-top)       │
+│     ├─ Waveform + interim text          │
+│     └─ Sound feedback (Web Audio)       │
+├─────────────────────────────────────────┤
+│  Web Dashboard (localhost:7789)         │
+│  ├─ Settings tab                        │
+│  ├─ Snippets tab                        │
+│  ├─ History tab (real-time WS)          │
+│  └─ Stats tab (real-time WS)            │
 ├─────────────────────────────────────────┤
 │  Deepgram WebSocket                     │
-│  └─ Real-time streaming STT            │
+│  └─ nova-3, smart_format, interim       │
 └─────────────────────────────────────────┘
 ```
 
-## Implementation Todos
-
-1. **project-setup** — Initialize Electron + React + TypeScript project with build tooling
-2. **floating-pill-ui** — Create the floating always-on-top pill window with dark theme, mic icon, waveform animation
-3. **tray-icon** — Add menu bar tray icon with toggle, settings, quit options
-4. **global-shortcut** — Register global keyboard shortcut (Cmd+Shift+Space) to toggle recording
-5. **audio-capture** — Capture microphone audio as PCM stream in Electron main process
-6. **deepgram-streaming** — Connect to Deepgram WebSocket, stream audio, receive real-time transcription
-7. **keystroke-injection** — Use macOS Accessibility API (via native module / AppleScript) to type text at cursor
-8. **settings-window** — Settings UI for API key, shortcut config, language selection (persisted via electron-store)
-9. **wiring-integration** — Wire all pieces together: shortcut → capture → stream → transcribe → inject
-10. **packaging** — Package as .dmg for macOS distribution
-
-## Dependencies (key packages)
+## Key Packages
 - `electron` + `electron-builder`
 - `react` + `react-dom` + `typescript`
-- `@deepgram/sdk` (or raw WebSocket)
-- `electron-store` (settings persistence)
-- `node-global-shortcut` (built into Electron)
-- Native module or AppleScript bridge for keystroke injection
-
-## Notes
-- Accessibility permission prompt must be handled gracefully on first launch
-- The floating pill should be frameless, transparent, and not appear in the dock/taskbar
-- Audio visualization can use Web Audio API's AnalyserNode for frequency data
-- Deepgram's `smart_format=true` handles punctuation, filler removal, and casing
+- `@deepgram/sdk`
+- `electron-store` (settings, snippets, stats)
+- `express` (dashboard HTTP server)
+- `ws` (WebSocket for real-time dashboard)
+- `uiohook-napi` (Right Option key detection)
