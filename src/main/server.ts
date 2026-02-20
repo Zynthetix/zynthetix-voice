@@ -18,7 +18,7 @@ export function startServer(store: { get: (k: string) => unknown; set: (k: strin
   app.use(cors()); app.use(express.json())
 
   // Static dashboard in production
-  const staticPath = path.join(__dirname, '../../renderer/src/dashboard')
+  const staticPath = path.join(__dirname, '../renderer/src/dashboard')
   app.use(express.static(staticPath))
 
   // ── Settings ──────────────────────────────────────────────────────────────

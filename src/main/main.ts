@@ -36,7 +36,7 @@ function createPillWindow() {
     vibrancy: undefined,
   })
   pillWindow.setAlwaysOnTop(true, 'screen-saver')
-  pillWindow.loadURL(isDev ? `http://localhost:5173/src/renderer/pill.html` : `file://${path.join(__dirname, '../../renderer/src/renderer/pill.html')}`)
+  pillWindow.loadURL(isDev ? `http://localhost:5173/src/renderer/pill.html` : `file://${path.join(__dirname, '../renderer/src/renderer/pill.html')}`)
   pillWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   pillWindow.on('moved', () => {
     if (!pillWindow) return
