@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 
-type AppState = 'idle' | 'recording' | 'error'
+type AppState = 'idle' | 'recording' | 'processing' | 'error'
 interface ElectronAPI {
   onStateChange:       (cb: (d: { state: string; message?: string }) => void) => void
   onTranscript:        (cb: (d: { text: string }) => void) => void
@@ -14,7 +14,7 @@ interface ElectronAPI {
 }
 declare global { interface Window { electronAPI: ElectronAPI } }
 
-const BAR_COUNT = 28
+const BAR_COUNT = 18
 
 function playBeep(type: 'start' | 'stop') {
   try {
@@ -34,8 +34,6 @@ function playBeep(type: 'start' | 'stop') {
 export default function PillApp() {
   const [appState, setAppState]       = useState<AppState>('idle')
   const [errorMsg, setErrorMsg]       = useState('')
-  const [interimText, setInterimText] = useState('')
-  const [finalText, setFinalText]     = useState('')
   const [bars, setBars]               = useState<number[]>(new Array(BAR_COUNT).fill(3))
   const [tick, setTick]               = useState(0)   // drives 3-D rotation shimmer
 
@@ -65,6 +63,21 @@ export default function PillApp() {
   }, [])
   const stopIdleAnim = useCallback(() => cancelAnimationFrame(idleAnimRef.current), [])
 
+  // ── Processing breathing (slower) ────────────────────────────────────────
+  const runProcessingAnim = useCallback(() => {
+    let t = 0
+    const tick = () => {
+      if (appStateRef.current !== 'processing') return
+      t += 0.015
+      setBars(Array.from({ length: BAR_COUNT }, (_, i) => {
+        const p = (i / BAR_COUNT) * Math.PI * 2
+        return Math.max(2, 4 + Math.sin(t + p) * 3 + Math.sin(t * 0.9 + p * 1.2) * 1.5)
+      }))
+      idleAnimRef.current = requestAnimationFrame(tick)
+    }
+    idleAnimRef.current = requestAnimationFrame(tick)
+  }, [])
+
   // ── 3-D surface shimmer while recording ──────────────────────────────────
   useEffect(() => {
     if (appState !== 'recording') { setTick(0); return }
@@ -79,9 +92,11 @@ export default function PillApp() {
   }, [appState])
 
   useEffect(() => {
-    if (appState === 'idle') runIdleAnim(); else stopIdleAnim()
+    if (appState === 'idle') runIdleAnim()
+    else if (appState === 'processing') runProcessingAnim()
+    else stopIdleAnim()
     return stopIdleAnim
-  }, [appState, runIdleAnim, stopIdleAnim])
+  }, [appState, runIdleAnim, runProcessingAnim, stopIdleAnim])
 
   // ── Audio capture ─────────────────────────────────────────────────────────
   const stopAudio = useCallback(() => {
@@ -133,159 +148,116 @@ export default function PillApp() {
   useEffect(() => {
     window.electronAPI.onStateChange(({ state, message }) => {
       setAppState(state as AppState)
-      if (state === 'idle') { setInterimText(''); setFinalText('') }
       if (message) setErrorMsg(message)
     })
-    window.electronAPI.onTranscript(({ text }) => {
-      const wc = text.trim().split(/\s+/).filter(Boolean).length
-      window.electronAPI.sendFinalStats({ wordCount: wc })
-      setInterimText('')
-      setFinalText(text)
-      setTimeout(() => setFinalText(''), 3500)
-    })
-    window.electronAPI.onInterimTranscript(({ text }) => setInterimText(text))
+    window.electronAPI.onTranscript(() => {/* text is pasted directly — no pill display */})
+    window.electronAPI.onInterimTranscript(() => {/* streaming disabled */})
     window.electronAPI.onStartAudioCapture(() => startAudio())
     window.electronAPI.onStopAudioCapture(() => stopAudio())
     window.electronAPI.onPlaySound((type) => playBeep(type))
     runIdleAnim()
   }, [startAudio, stopAudio, runIdleAnim])
 
-  const rec = appState === 'recording'
-  const err = appState === 'error'
-  const displayText = err ? errorMsg : (interimText || finalText)
-
-  // ── 3-D depth shadows (no gradients) ─────────────────────────────────────
-  // Idle: dark pill floating with layered depth
-  // Recording: bright top-edge highlight + deep inset + far drop shadow = lifted 3-D slab
-  const depthShadow = rec
-    ? [
-        `0 1px 0 rgba(255,255,255,0.18)`,           // top-edge specular
-        `inset 0 1px 0 rgba(255,255,255,0.10)`,     // inner top highlight
-        `inset 0 -1px 0 rgba(0,0,0,0.5)`,           // inner bottom depth
-        `0 4px 0 #0a0a0a`,                           // bottom face (3-D extrusion)
-        `0 6px 16px rgba(0,0,0,0.7)`,               // mid shadow
-        `0 16px 40px rgba(0,0,0,0.55)`,             // far ambient
-      ].join(',')
-    : [
-        `0 1px 0 rgba(255,255,255,0.07)`,
-        `inset 0 1px 0 rgba(255,255,255,0.06)`,
-        `inset 0 -1px 0 rgba(0,0,0,0.4)`,
-        `0 2px 0 #080808`,
-        `0 4px 12px rgba(0,0,0,0.5)`,
-        `0 10px 28px rgba(0,0,0,0.35)`,
-      ].join(',')
-
-  // Animated highlight band across the top surface while recording
-  const highlightX = rec ? Math.sin(tick) * 60 + 50 : 50
-  const highlightOpacity = rec ? 0.07 + Math.abs(Math.sin(tick * 0.8)) * 0.07 : 0
+  const rec  = appState === 'recording'
+  const proc = appState === 'processing'
+  const err  = appState === 'error'
+  const active = rec || proc
 
   return (
     <>
-      <style>{`
-        @keyframes mountIn {
-          from { opacity:0; transform:scale(0.85) translateY(6px) }
-          to   { opacity:1; transform:scale(1)    translateY(0)   }
-        }
-        * { -webkit-font-smoothing: antialiased; box-sizing: border-box; }
-      `}</style>
-
       <div style={{
         width:'100%', height:'100%',
         display:'flex', alignItems:'center', justifyContent:'center',
         WebkitAppRegion:'drag',
-        animation:'mountIn 0.35s cubic-bezier(0.34,1.56,0.64,1)',
         background: 'transparent',
+        animation: 'mountIn 0.3s cubic-bezier(0.34,1.56,0.64,1)',
+        fontFamily: "'Inter', system-ui, sans-serif",
       } as React.CSSProperties}
         onContextMenu={e => { e.preventDefault(); window.electronAPI.showContextMenu() }}>
 
         <div style={{
-          display:'flex', alignItems:'center', gap:10,
-          /* Solid surfaces only — zero gradients */
-          background: rec ? '#1c1c28' : err ? '#1e1010' : '#161620',
+          display:'flex', alignItems:'center', gap: rec ? 6 : 5,
+          background: rec ? '#1c1c28' : proc ? '#18181b' : err ? '#1a0a0a' : '#111113',
           borderRadius: 30,
-          padding: '0 14px',
-          height: rec ? 52 : 46,
-          width:  rec ? 250 : 218,
-          boxShadow: depthShadow,
-          /* Single-pixel border: lighter top-left, darker bottom-right for 3-D bevel */
+          padding: rec ? '0 10px' : proc ? '0 10px' : '0 8px',
+          height: rec ? 38 : proc ? 28 : 26,
+          width:  rec ? 150 : proc ? 72 : 56,
+          boxShadow: rec
+            ? '0 1px 0 rgba(255,255,255,0.1), inset 0 1px 0 rgba(255,255,255,0.07), inset 0 -1px 0 rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.4)'
+            : '0 1px 0 rgba(255,255,255,0.05), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 6px rgba(0,0,0,0.3)',
           border: rec
-            ? '1px solid rgba(255,255,255,0.14)'
-            : err
-              ? '1px solid rgba(255,80,80,0.2)'
-              : '1px solid rgba(255,255,255,0.08)',
+            ? '1px solid rgba(255,255,255,0.12)'
+            : proc
+              ? '1px solid rgba(255,255,255,0.08)'
+              : err
+                ? '1px solid rgba(255,80,80,0.2)'
+                : '1px solid rgba(255,255,255,0.07)',
           transition: 'all 0.3s cubic-bezier(0.34,1.56,0.64,1)',
           WebkitAppRegion: 'drag',
           position: 'relative',
           overflow: 'hidden',
         } as React.CSSProperties}>
 
-          {/* Animated surface highlight band — solid white at low opacity, no gradient color */}
+          {/* Surface highlight band while recording */}
           {rec && (
             <div style={{
               position:'absolute', inset:0, pointerEvents:'none', borderRadius:30,
-              background: `radial-gradient(ellipse 60% 30% at ${highlightX}% 0%, rgba(255,255,255,${highlightOpacity}) 0%, transparent 100%)`,
+              background: `radial-gradient(ellipse 60% 30% at ${Math.sin(tick) * 60 + 50}% 0%, rgba(255,255,255,${0.04 + Math.abs(Math.sin(tick * 0.8)) * 0.04}) 0%, transparent 100%)`,
             }}/>
           )}
 
-          {/* Active recording ring — clean white border pulse, no color gradient */}
-          {rec && (
-            <div style={{
-              position:'absolute', inset:-3, borderRadius:33, pointerEvents:'none',
-              border:'1.5px solid rgba(255,255,255,0.12)',
-              boxShadow:'0 0 0 1px rgba(255,255,255,0.05)',
-            }}/>
-          )}
-
-          {/* Mic */}
-          <div style={{ flexShrink:0, WebkitAppRegion:'no-drag', cursor:'pointer', zIndex:1 } as React.CSSProperties}
-            onClick={() => window.electronAPI.showContextMenu()}>
-            <MicIcon recording={rec} tick={tick} />
-          </div>
-
-          {/* Waveform bars */}
-          <div style={{ display:'flex', alignItems:'center', gap:1.5, flex:1, height:40, zIndex:1 }}>
-            {bars.map((h, i) => {
-              const center = BAR_COUNT / 2
-              const dist = Math.abs(i - center) / center
-              // Recording: bright white bars fading to edges; idle: dim
-              const alpha = rec
-                ? 0.45 + (1 - dist) * 0.5
-                : 0.12 + (1 - dist) * 0.1
-              return (
-                <div key={i} style={{
-                  flex: 1,
-                  height: h,
-                  background: `rgba(255,255,255,${alpha})`,
-                  borderRadius: 2,
-                  transition: rec ? 'height 0.05s ease' : 'height 0.2s ease',
-                  /* Each bar gets a tiny top highlight for 3-D rounded-rod feel */
-                  boxShadow: rec ? `0 1px 0 rgba(255,255,255,${alpha * 0.5})` : 'none',
-                }}/>
-              )
-            })}
-          </div>
-
-          {/* Status text */}
-          {displayText ? (
-            <div style={{
-              flexShrink:0, maxWidth:88, fontSize:11, zIndex:1,
-              fontFamily:'-apple-system,BlinkMacSystemFont,sans-serif',
-              fontWeight:500, letterSpacing:0.2,
-              overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
-              color: err ? '#ff6060' : interimText ? 'rgba(255,255,255,0.38)' : 'rgba(255,255,255,0.72)',
-              fontStyle: interimText ? 'italic' : 'normal',
-              WebkitAppRegion:'no-drag',
-            } as React.CSSProperties}>
-              {displayText}
+          {/* Mic icon — hidden during processing */}
+          {!proc && (
+            <div style={{ flexShrink:0, WebkitAppRegion:'no-drag', cursor:'pointer', zIndex:1 } as React.CSSProperties}
+              onClick={() => window.electronAPI.showContextMenu()}>
+              <MicIcon recording={rec} tick={tick} />
             </div>
-          ) : !rec && (
-            <div style={{
-              flexShrink:0, fontSize:11,
-              color:'rgba(255,255,255,0.18)',
-              fontFamily:'-apple-system,BlinkMacSystemFont,sans-serif',
-              letterSpacing:0.3, zIndex:1,
-              WebkitAppRegion:'no-drag',
-            } as React.CSSProperties}>⌥⌥</div>
+          )}
+
+          {/* Waveform bars — recording only */}
+          {rec && (
+            <div style={{ display:'flex', alignItems:'center', gap:1.5, flex:1, height:28, zIndex:1 }}>
+              {bars.map((h, i) => {
+                const center = BAR_COUNT / 2
+                const dist = Math.abs(i - center) / center
+                const alpha = 0.4 + (1 - dist) * 0.5
+                return (
+                  <div key={i} style={{
+                    flex: 1,
+                    height: Math.min(h, 24),
+                    background: `rgba(255,255,255,${alpha})`,
+                    borderRadius: 2,
+                    transition: 'height 0.05s ease',
+                  }}/>
+                )
+              })}
+            </div>
+          )}
+
+          {/* Processing spinner — SVG-native rotation + CSS pulsing dots */}
+          {proc && (
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'center', flex:1, gap:4, zIndex:1 }}>
+              {/* Spinner ring using SVG animateTransform — works without @keyframes */}
+              <svg width="15" height="15" viewBox="0 0 24 24" style={{ flexShrink:0 }}>
+                <circle cx="12" cy="12" r="9" fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="2.5"/>
+                <path d="M12 3 A9 9 0 0 1 21 12" fill="none" stroke="rgba(255,255,255,0.8)" strokeWidth="2.5" strokeLinecap="round">
+                  <animateTransform attributeName="transform" type="rotate"
+                    from="0 12 12" to="360 12 12" dur="0.75s" repeatCount="indefinite"/>
+                </path>
+              </svg>
+              {/* Pulsing dots via CSS animation (keyframes in pill.html) */}
+              {([0, 200, 400] as const).map((delay, i) => (
+                <div key={i} style={{
+                  width:3, height:3, borderRadius:'50%',
+                  background:'rgba(255,255,255,0.6)',
+                  animationName:'pulse',
+                  animationDuration:'1.2s',
+                  animationTimingFunction:'ease-in-out',
+                  animationDelay:`${delay}ms`,
+                  animationIterationCount:'infinite',
+                }}/>
+              ))}
+            </div>
           )}
         </div>
       </div>
@@ -294,12 +266,13 @@ export default function PillApp() {
 }
 
 function MicIcon({ recording, tick }: { recording: boolean; tick: number }) {
-  const scale  = recording ? 1 + Math.abs(Math.sin(tick * 1.2)) * 0.1 : 1
-  const alpha  = recording ? 0.9 + Math.abs(Math.sin(tick)) * 0.1 : 0.4
-  const color  = `rgba(255,255,255,${alpha})`
-  const shadow = recording ? `drop-shadow(0 1px 3px rgba(0,0,0,0.8)) drop-shadow(0 0 6px rgba(255,255,255,0.25))` : 'none'
+  const scale = recording ? 1 + Math.abs(Math.sin(tick * 1.2)) * 0.1 : 1
+  const alpha = recording ? 0.9 + Math.abs(Math.sin(tick)) * 0.1 : 0.35
+  const color = `rgba(255,255,255,${alpha})`
+  const shadow = recording ? `drop-shadow(0 1px 3px rgba(0,0,0,0.8)) drop-shadow(0 0 5px rgba(255,255,255,0.2))` : 'none'
+  const size  = recording ? 13 : 11
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
       style={{ transform:`scale(${scale})`, transition:'transform 0.1s ease', filter:shadow }}>
       <rect x="9" y="2" width="6" height="12" rx="3" fill={color}/>
       <path d="M5 10a7 7 0 0014 0" stroke={color} strokeWidth="2" strokeLinecap="round" fill="none"/>

@@ -12,9 +12,7 @@ const store = new Store<{ deepgramApiKey: string; language: string; model: strin
 
 let pillWindow: BrowserWindow | null = null
 let tray: Tray | null = null
-let deepgramConnection: any = null
-let deepgramReady = false          // true only after Deepgram 'open' fires
-const audioQueue: Buffer[] = []    // buffer audio until Deepgram is ready
+const audioBuffer: Buffer[] = []   // accumulates raw PCM while recording
 let isRecording = false
 let recordingStartTime = 0
 let sessionWords = 0
@@ -27,10 +25,10 @@ function pillHtmlPath(page: string) {
 
 function createPillWindow() {
   const { width } = require('electron').screen.getPrimaryDisplay().workAreaSize
-  const x = (store.get('pillX') as number) ?? (width - 280)
+  const x = (store.get('pillX') as number) ?? (width - 210)
   const y = (store.get('pillY') as number) ?? 20
   pillWindow = new BrowserWindow({
-    x, y, width: 280, height: 68,
+    x, y, width: 200, height: 56,
     frame: false, transparent: true, resizable: false,
     alwaysOnTop: true, hasShadow: false, skipTaskbar: true,
     backgroundColor: '#00000000',
@@ -64,13 +62,7 @@ function createTray() {
 // ─── IPC ─────────────────────────────────────────────────────────────────────
 ipcMain.on('audio-chunk', (_e, chunk: ArrayBuffer) => {
   if (!isRecording) return
-  const buf = Buffer.from(chunk)
-  if (deepgramReady && deepgramConnection) {
-    try { deepgramConnection.send(buf) } catch {}
-  } else {
-    audioQueue.push(buf)
-    if (audioQueue.length > 80) audioQueue.shift() // cap buffer ~5s
-  }
+  audioBuffer.push(Buffer.from(chunk))
 })
 
 ipcMain.on('show-context-menu', () => {
@@ -91,7 +83,7 @@ ipcMain.on('final-transcript-for-stats', (_e, { wordCount }: { wordCount: number
 ipcMain.handle('get-settings', () => ({
   deepgramApiKey: store.get('deepgramApiKey'),
   language: store.get('language') || 'en',
-  model: store.get('model') || 'nova-3',
+  model: store.get('model') || 'nova-2',
 }))
 
 ipcMain.handle('save-settings', (_e, s: { deepgramApiKey?: string; language?: string; model?: string }) => {
@@ -108,6 +100,25 @@ function typeText(text: string) {
   spawnSync('osascript', ['-e', 'tell application "System Events" to keystroke "v" using {command down}'])
 }
 
+// ─── WAV helper ───────────────────────────────────────────────────────────────
+function createWav(pcm: Buffer, sampleRate = 16000, channels = 1, bitDepth = 16): Buffer {
+  const header = Buffer.alloc(44)
+  header.write('RIFF', 0)
+  header.writeUInt32LE(36 + pcm.length, 4)
+  header.write('WAVE', 8)
+  header.write('fmt ', 12)
+  header.writeUInt32LE(16, 16)
+  header.writeUInt16LE(1, 20)
+  header.writeUInt16LE(channels, 22)
+  header.writeUInt32LE(sampleRate, 24)
+  header.writeUInt32LE(sampleRate * channels * (bitDepth / 8), 28)
+  header.writeUInt16LE(channels * (bitDepth / 8), 32)
+  header.writeUInt16LE(bitDepth, 34)
+  header.write('data', 36)
+  header.writeUInt32LE(pcm.length, 40)
+  return Buffer.concat([header, pcm])
+}
+
 // ─── Deepgram ─────────────────────────────────────────────────────────────────
 async function startRecording() {
   const apiKey = store.get('deepgramApiKey') as string
@@ -116,77 +127,54 @@ async function startRecording() {
       .then(r => { if (r.response === 0) shell.openExternal(`http://localhost:${DASHBOARD_PORT}`) })
     return
   }
-  const language = (store.get('language') as string) || 'en'
-  const model = (store.get('model') as string) || 'nova-3'
-  const client = createClient(apiKey)
-
-  // ── Activate UI immediately — don't wait for Deepgram WebSocket ──
   isRecording = true; recordingStartTime = Date.now(); sessionWords = 0
-  deepgramReady = false; audioQueue.length = 0
+  audioBuffer.length = 0
   pillWindow?.webContents.send('state-change', { state: 'recording' })
   pillWindow?.webContents.send('start-audio-capture')
   pillWindow?.webContents.send('play-sound', 'start')
-
-  try {
-    deepgramConnection = client.listen.live({
-      model, language, smart_format: true, interim_results: true,
-      utterance_end_ms: 1000, endpointing: 10,
-      punctuate: true, profanity_filter: false,
-      diarize: false, vad_events: true, encoding: 'linear16', sample_rate: 16000,
-    })
-
-    deepgramConnection.on('open', () => {
-      console.log('Deepgram connected')
-      deepgramReady = true
-      // Flush buffered audio captured before connection was ready
-      for (const buf of audioQueue) {
-        try { deepgramConnection.send(buf) } catch {}
-      }
-      audioQueue.length = 0
-    })
-
-    deepgramConnection.on('Results', (data: unknown) => {
-      const result = data as { channel: { alternatives: { transcript: string }[] }; is_final: boolean; speech_final: boolean }
-      const transcript = result?.channel?.alternatives?.[0]?.transcript
-      if (!transcript) return
-      if (result.is_final && result.speech_final) {
-        const expanded = applySnippets(transcript)
-        typeText(expanded)
-        pillWindow?.webContents.send('transcript', { text: expanded })
-        const wc = expanded.trim().split(/\s+/).filter(Boolean).length
-        const durSec = Math.round((Date.now() - recordingStartTime) / 1000)
-        insertHistory(expanded, wc, durSec)
-        broadcast({ type: 'history-item', item: { text: expanded, word_count: wc, duration_sec: durSec, created_at: new Date().toISOString() } })
-      } else if (!result.is_final) {
-        pillWindow?.webContents.send('interim-transcript', { text: transcript })
-      }
-    })
-
-    deepgramConnection.on('error', (err: unknown) => {
-      console.error('Deepgram error:', err)
-      pillWindow?.webContents.send('state-change', { state: 'error', message: 'Connection error' })
-      isRecording = false
-    })
-
-    deepgramConnection.on('close', () => {
-      isRecording = false
-    })
-  } catch (err) {
-    console.error('Failed to start recording:', err)
-    pillWindow?.webContents.send('state-change', { state: 'error', message: String(err) })
-  }
 }
 
-function stopRecording() {
+async function stopRecording() {
   if (!isRecording) return
-  isRecording = false; deepgramReady = false; audioQueue.length = 0
+  isRecording = false
+  const capturedChunks = audioBuffer.splice(0)   // grab & clear atomically
   pillWindow?.webContents.send('stop-audio-capture')
   pillWindow?.webContents.send('play-sound', 'stop')
-  pillWindow?.webContents.send('state-change', { state: 'idle' })
+  pillWindow?.webContents.send('state-change', { state: 'processing' })
+
+  // Yield so the renderer can paint the processing state before we assemble the WAV
+  await new Promise(resolve => setImmediate(resolve))
+
   const secs = Math.round((Date.now() - recordingStartTime) / 1000)
-  if (sessionWords > 0 || secs > 1) incrementStats(sessionWords, secs)
-  try { deepgramConnection?.finish() } catch {}
-  deepgramConnection = null
+
+  try {
+    const apiKey = store.get('deepgramApiKey') as string
+    const language = (store.get('language') as string) || 'en'
+    const model = (store.get('model') as string) || 'nova-2'
+    const client = createClient(apiKey)
+    const wav = createWav(Buffer.concat(capturedChunks))
+    const { result, error } = await client.listen.prerecorded.transcribeFile(wav, {
+      model, language, smart_format: true, punctuate: true,
+      profanity_filter: false, diarize: false, mimetype: 'audio/wav',
+    })
+    if (error) throw error
+    const transcript = result?.results?.channels?.[0]?.alternatives?.[0]?.transcript ?? ''
+    if (transcript.trim()) {
+      const expanded = applySnippets(transcript)
+      typeText(expanded)
+      const wc = expanded.trim().split(/\s+/).filter(Boolean).length
+      sessionWords = wc
+      insertHistory(expanded, wc, secs)
+      broadcast({ type: 'history-item', item: { text: expanded, word_count: wc, duration_sec: secs, created_at: new Date().toISOString() } })
+      if (wc > 0 || secs > 1) incrementStats(wc, secs)
+    }
+  } catch (err) {
+    console.error('Transcription error:', err)
+    pillWindow?.webContents.send('state-change', { state: 'error', message: String(err) })
+    setTimeout(() => pillWindow?.webContents.send('state-change', { state: 'idle' }), 3000)
+    return
+  }
+  pillWindow?.webContents.send('state-change', { state: 'idle' })
 }
 
 // ─── Recording controller ─────────────────────────────────────────────────────
@@ -242,5 +230,4 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   uIOhook.stop()
-  try { deepgramConnection?.finish() } catch {}
 })
