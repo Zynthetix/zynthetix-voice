@@ -31,7 +31,7 @@ interface AppSettings {
 
 // ── Design tokens ──────────────────────────────────────────────────────────────
 const C = {
-  bg:       '#0a0a0b',
+  bg:       '#0F0F10',
   surface:  '#111113',
   surface2: '#18181b',
   border:   '#27272a',
@@ -39,7 +39,7 @@ const C = {
   text:     '#fafafa',
   text2:    '#a1a1aa',
   text3:    '#52525b',
-  accent:   '#fafafa',
+  accent:   '#4F76F6',
   red:      '#f87171',
   green:    '#4ade80',
 } as const
@@ -71,7 +71,7 @@ const inputCss: React.CSSProperties = {
   fontSize: 13,
   fontFamily: 'inherit',
   outline: 'none',
-  transition: 'border-color 0.15s',
+  transition: 'border-color 0.18s',
 }
 
 const btnCss: React.CSSProperties = {
@@ -87,15 +87,15 @@ const btnCss: React.CSSProperties = {
   fontWeight: 500,
   fontFamily: 'inherit',
   cursor: 'pointer',
-  transition: 'all 0.15s',
+  transition: 'all 0.18s',
   letterSpacing: 0.2,
 }
 
 const btnPrimaryCss: React.CSSProperties = {
   ...btnCss,
-  background: C.text,
-  border: `1px solid ${C.text}`,
-  color: C.bg,
+  background: C.accent,
+  border: `1px solid ${C.accent}`,
+  color: '#fff',
 }
 
 // ── Nav icons ──────────────────────────────────────────────────────────────────
@@ -235,7 +235,7 @@ export default function App() {
               fontFamily: 'inherit',
               cursor: 'pointer',
               textAlign: 'left',
-              transition: 'all 0.12s',
+              transition: 'all 0.18s cubic-bezier(0.4,0,0.2,1)',
               marginBottom: 2,
             }}>
               <Icon active={page === id} />
@@ -244,7 +244,6 @@ export default function App() {
                 <span style={{
                   marginLeft: 'auto', width: 6, height: 6,
                   borderRadius: '50%', background: C.green,
-                  boxShadow: `0 0 6px ${C.green}`,
                 }}/>
               )}
             </button>
@@ -314,7 +313,7 @@ function HistoryPage({ history, setHistory, copyText, copied }: {
                   border: `1px solid ${C.border}`,
                   borderRadius: 10,
                   padding: '14px 16px',
-                  transition: 'border-color 0.15s',
+                  transition: 'border-color 0.18s',
                 }}>
                   <p style={{
                     fontSize: 13.5, lineHeight: 1.6,
@@ -619,9 +618,9 @@ function SettingsPage({ settings, setSettings }: {
             padding: '10px 20px',
             fontSize: 13,
             marginTop: 4,
-            background: saved ? C.green : C.text,
-            borderColor: saved ? C.green : C.text,
-            color: saved ? '#052e16' : C.bg,
+            background: saved ? C.green : C.accent,
+            borderColor: saved ? C.green : C.accent,
+            color: '#fff',
             transition: 'all 0.2s',
           }}>
             {saved ? '✓ Saved' : 'Save changes'}

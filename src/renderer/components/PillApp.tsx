@@ -170,21 +170,19 @@ export default function PillApp() {
         display:'flex', alignItems:'center', justifyContent:'center',
         WebkitAppRegion:'drag',
         background: 'transparent',
-        animation: 'mountIn 0.3s cubic-bezier(0.34,1.56,0.64,1)',
+        animation: 'mountIn 0.2s cubic-bezier(0.4,0,0.2,1)',
         fontFamily: "'Inter', system-ui, sans-serif",
       } as React.CSSProperties}
         onContextMenu={e => { e.preventDefault(); window.electronAPI.showContextMenu() }}>
 
         <div style={{
           display:'flex', alignItems:'center', gap: rec ? 6 : 5,
-          background: rec ? '#1c1c28' : proc ? '#18181b' : err ? '#1a0a0a' : '#111113',
+          background: rec ? '#1a1a2a' : proc ? '#161618' : err ? '#180a0a' : '#0F0F10',
           borderRadius: 30,
           padding: rec ? '0 10px' : proc ? '0 10px' : '0 8px',
           height: rec ? 38 : proc ? 28 : 26,
           width:  rec ? 150 : proc ? 72 : 56,
-          boxShadow: rec
-            ? '0 1px 0 rgba(255,255,255,0.1), inset 0 1px 0 rgba(255,255,255,0.07), inset 0 -1px 0 rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.4)'
-            : '0 1px 0 rgba(255,255,255,0.05), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 6px rgba(0,0,0,0.3)',
+
           border: rec
             ? '1px solid rgba(255,255,255,0.12)'
             : proc
@@ -192,19 +190,11 @@ export default function PillApp() {
               : err
                 ? '1px solid rgba(255,80,80,0.2)'
                 : '1px solid rgba(255,255,255,0.07)',
-          transition: 'all 0.3s cubic-bezier(0.34,1.56,0.64,1)',
+          transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
           WebkitAppRegion: 'drag',
           position: 'relative',
           overflow: 'hidden',
         } as React.CSSProperties}>
-
-          {/* Surface highlight band while recording */}
-          {rec && (
-            <div style={{
-              position:'absolute', inset:0, pointerEvents:'none', borderRadius:30,
-              background: `radial-gradient(ellipse 60% 30% at ${Math.sin(tick) * 60 + 50}% 0%, rgba(255,255,255,${0.04 + Math.abs(Math.sin(tick * 0.8)) * 0.04}) 0%, transparent 100%)`,
-            }}/>
-          )}
 
           {/* Mic icon — hidden during processing */}
           {!proc && (
@@ -269,11 +259,10 @@ function MicIcon({ recording, tick }: { recording: boolean; tick: number }) {
   const scale = recording ? 1 + Math.abs(Math.sin(tick * 1.2)) * 0.1 : 1
   const alpha = recording ? 0.9 + Math.abs(Math.sin(tick)) * 0.1 : 0.35
   const color = `rgba(255,255,255,${alpha})`
-  const shadow = recording ? `drop-shadow(0 1px 3px rgba(0,0,0,0.8)) drop-shadow(0 0 5px rgba(255,255,255,0.2))` : 'none'
   const size  = recording ? 13 : 11
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-      style={{ transform:`scale(${scale})`, transition:'transform 0.1s ease', filter:shadow }}>
+      style={{ transform:`scale(${scale})`, transition:'transform 0.1s ease' }}>
       <rect x="9" y="2" width="6" height="12" rx="3" fill={color}/>
       <path d="M5 10a7 7 0 0014 0" stroke={color} strokeWidth="2" strokeLinecap="round" fill="none"/>
       <line x1="12" y1="17" x2="12" y2="21" stroke={color} strokeWidth="2" strokeLinecap="round"/>

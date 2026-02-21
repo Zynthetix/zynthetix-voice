@@ -10,7 +10,7 @@ declare global {
 }
 
 const C = {
-  bg:       '#0a0a0b',
+  bg:       '#0F0F10',
   surface:  '#111113',
   surface2: '#18181b',
   border:   '#27272a',
@@ -18,6 +18,7 @@ const C = {
   text:     '#fafafa',
   text2:    '#a1a1aa',
   text3:    '#52525b',
+  accent:   '#4F76F6',
   green:    '#4ade80',
 } as const
 
@@ -116,9 +117,9 @@ export default function SettingsApp() {
       {/* Save */}
       <button onClick={handleSave} style={{
         width: '100%', padding: '10px 0',
-        background: saved ? C.green : C.text,
+        background: saved ? C.green : C.accent,
         border: 'none', borderRadius: 8,
-        color: saved ? '#052e16' : C.bg,
+        color: '#fff',
         fontSize: 13, fontWeight: 600,
         fontFamily: 'inherit', cursor: 'pointer',
         letterSpacing: 0.2,

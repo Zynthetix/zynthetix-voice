@@ -1,14 +1,16 @@
 # Zynthetix Voice
 
-A WisprFlow-like macOS speech-to-text app. Press a hotkey and speak — your words appear wherever your cursor is.
+A WisprFlow-like macOS speech-to-text app. Press a hotkey and speak — your words are typed wherever your cursor is.
 
 ## Features
+
 - 🎤 Floating pill widget with animated audio waveform
-- ⌨️ Global hotkey (`Cmd+Shift+Space`) works in any app
+- ⌥ Global hotkey (double-tap **Right ⌥** or hold to push-to-talk) works in any app
 - 🧠 Deepgram real-time streaming STT with smart formatting
 - 📝 Inserts text via macOS Accessibility API (types at cursor)
-- 🔧 Settings window for API key, shortcut, and language
-- 🗂 Menu bar tray icon
+- 🗂 Lives in the menu bar — no Dock icon
+- 📊 Dashboard: transcription history, text snippets, stats, and settings
+- 🔤 Text snippet expansion — say a trigger word → full text is inserted
 
 ## Quick Start
 
@@ -20,7 +22,7 @@ npm install
 ### 2. Get a Deepgram API key
 Sign up free at [console.deepgram.com](https://console.deepgram.com) — you get **$200 in free credits**, which is enough for **~1 year of regular use**.
 
-> 💡 **How to claim:** Go to [console.deepgram.com](https://console.deepgram.com) → Create a free account → Create a new project → Generate an API key. No credit card required to start. $200 covers roughly 560 hours of transcription at nova-3 pricing ($0.0059/min).
+> 💡 Go to [console.deepgram.com](https://console.deepgram.com) → Create a free account → Create a new project → Generate an API key. No credit card required. $200 covers roughly 560 hours of transcription at nova-3 pricing ($0.0059/min).
 
 ### 3. Build & run
 ```bash
@@ -41,9 +43,11 @@ npm run dev
 
 ### 5. Dictate
 1. Click anywhere you want to type (text field, browser, Slack, etc.)
-2. Press **⌘⇧Space** to start recording (pill turns purple + waveform animates)
+2. **Double-tap Right ⌥** to start recording (pill animates)
 3. Speak naturally
-4. Press **⌘⇧Space** again to stop — text is typed at your cursor
+4. **Double-tap Right ⌥** again to stop — text is typed at your cursor
+
+> **Push-to-talk:** Hold **Right ⌥** while speaking, release to insert.
 
 ## Permissions Required
 | Permission | Why |
@@ -55,18 +59,23 @@ npm run dev
 ```
 src/
   main/
-    main.ts       — Electron main process (shortcuts, tray, STT, keystroke injection)
+    main.ts       — Electron main process (hotkeys, tray, STT, keystroke injection)
     preload.ts    — IPC bridge between main and renderer
+    db.ts         — SQLite database (history, snippets, stats)
+    server.ts     — Local HTTP + WebSocket server for dashboard
   renderer/
     components/
       PillApp.tsx     — Floating pill with waveform visualization
       SettingsApp.tsx — Settings window
     pill.html / pill.tsx
     settings.html / settings.tsx
+  dashboard/
+    App.tsx       — Dashboard SPA (history, snippets, stats, settings)
+    index.html / main.tsx
 ```
 
 ## Build for distribution
 ```bash
 npm run dist
-# Output: release/Zynthetix Voice-1.0.0.dmg
+# Output: release/Zynthetix Voice-1.1.0.dmg
 ```

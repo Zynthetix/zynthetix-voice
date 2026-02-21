@@ -1,6 +1,6 @@
 {
   "name": "zynthetix-voice",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "WisprFlow-like speech-to-text for macOS",
   "main": "dist/main/main.js",
   "scripts": {
