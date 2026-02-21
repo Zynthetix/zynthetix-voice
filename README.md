@@ -18,7 +18,9 @@ npm install
 ```
 
 ### 2. Get a Deepgram API key
-Sign up free at [console.deepgram.com](https://console.deepgram.com) — you get $200 free credits.
+Sign up free at [console.deepgram.com](https://console.deepgram.com) — you get **$200 in free credits**, which is enough for **~1 year of regular use**.
+
+> 💡 **How to claim:** Go to [console.deepgram.com](https://console.deepgram.com) → Create a free account → Create a new project → Generate an API key. No credit card required to start. $200 covers roughly 560 hours of transcription at nova-3 pricing ($0.0059/min).
 
 ### 3. Build & run
 ```bash
