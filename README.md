@@ -4,7 +4,7 @@ A WisprFlow-like macOS speech-to-text app. Press a hotkey and speak — your wor
 
 ## Download
 
-**[⬇ Download Zynthetix Voice-1.1.0-arm64.dmg](https://github.com/Zynthetix/zynthetix-voice/releases/latest/download/Zynthetix.Voice-1.1.0-arm64.dmg)**
+**[⬇ Download Zynthetix Voice-1.1.0-arm64.dmg](https://github.com/Zynthetix/zynthetix-voice/releases/download/v1.1.0/Zynthetix%20Voice-1.1.0-arm64.dmg)**
 
 > Requires macOS with Apple Silicon (M1/M2/M3/M4). No Node.js or project setup needed — just download, open the DMG, and drag the app to your Applications folder.
 
@@ -21,7 +21,7 @@ You only need to do this once.
 
 - 🎤 Floating pill widget with animated audio waveform
 - ⌥ Global hotkey (double-tap **Right ⌥** or hold to push-to-talk) works in any app
-- 🧠 Deepgram real-time streaming STT with smart formatting
+- 🧠 Deepgram speech-to-text with smart formatting
 - 📝 Inserts text via macOS Accessibility API (types at cursor)
 - 🗂 Lives in the menu bar — no Dock icon
 - 📊 Dashboard: transcription history, text snippets, stats, and settings
@@ -37,11 +37,10 @@ Sign up free at [console.deepgram.com](https://console.deepgram.com) — you get
 > 💡 Go to [console.deepgram.com](https://console.deepgram.com) → Create a free account → Create a new project → Generate an API key. No credit card required. $200 covers roughly 560 hours of transcription at nova-3 pricing ($0.0059/min).
 
 ### 2. First launch
-1. The app lives in your **menu bar** (no dock icon)
-2. Click the tray icon → **Settings**
-3. Paste your Deepgram API key
-4. Grant **Accessibility** permission when prompted (System Settings → Privacy & Security → Accessibility)
-5. Grant **Microphone** permission when prompted
+1. On first open, the app will show a **Welcome dialog** asking you to set your Deepgram API key — click **Open Settings** and paste it in
+2. The app lives in your **menu bar** (no dock icon)
+3. Grant **Accessibility** permission when prompted (System Settings → Privacy & Security → Accessibility)
+4. Grant **Microphone** permission when prompted
 
 ### 3. Dictate
 1. Click anywhere you want to type (text field, browser, Slack, etc.)
