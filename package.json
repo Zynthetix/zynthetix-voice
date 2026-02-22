@@ -1,6 +1,6 @@
 {
   "name": "zynthetix-voice",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "description": "WisprFlow-like speech-to-text for macOS",
   "main": "dist/main/main.js",
   "scripts": {
@@ -12,6 +12,8 @@
     "build:main": "tsc -p tsconfig.main.json",
     "pack": "npm run build && electron-builder --mac --dir",
     "dist": "npm run build && electron-builder --mac",
+    "whisper:download": "node node_modules/nodejs-whisper/dist/downloadModel.js",
+    "whisper:build": "cd node_modules/nodejs-whisper/cpp/whisper.cpp && cmake -B build -DGGML_METAL=OFF -DWHISPER_ACCELERATE=ON && cmake --build build --config Release",
     "postinstall": "electron-rebuild -f -w better-sqlite3,uiohook-napi",
     "prestart": "npm run build",
     "start": "NODE_ENV=production electron ."
@@ -34,11 +36,11 @@
     "wait-on": "^7.2.0"
   },
   "dependencies": {
-    "@deepgram/sdk": "^3.3.0",
     "better-sqlite3": "^12.6.2",
     "cors": "^2.8.6",
     "electron-store": "^8.2.0",
     "express": "^5.2.1",
+    "nodejs-whisper": "^0.2.9",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "recharts": "^3.7.0",
@@ -49,6 +51,9 @@
     "appId": "com.zynthetix.voice",
     "productName": "Zynthetix Voice",
     "icon": "assets/icons/icon.icns",
+    "asarUnpack": [
+      "node_modules/nodejs-whisper/**/*"
+    ],
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "assets/icons/icon.icns",

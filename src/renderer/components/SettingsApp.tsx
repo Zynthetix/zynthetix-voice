@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react'
 
 interface ElectronAPI {
-  getSettings: () => Promise<{ deepgramApiKey: string; language: string; model: string }>
-  saveSettings: (s: { deepgramApiKey?: string; language?: string; model?: string }) => Promise<boolean>
+  getSettings: () => Promise<{ whisperModel: string; language: string }>
+  saveSettings: (s: { whisperModel?: string; language?: string }) => Promise<boolean>
 }
 
 declare global {
@@ -23,22 +23,19 @@ const C = {
 } as const
 
 export default function SettingsApp() {
-  const [apiKey, setApiKey]     = useState('')
+  const [whisperModel, setWhisperModel] = useState('base')
   const [language, setLanguage] = useState('en')
-  const [model, setModel]       = useState('nova-2')
   const [saved, setSaved]       = useState(false)
-  const [showKey, setShowKey]   = useState(false)
 
   useEffect(() => {
     window.electronAPI.getSettings().then(s => {
-      setApiKey(s.deepgramApiKey || '')
+      setWhisperModel(s.whisperModel || 'base')
       setLanguage(s.language || 'en')
-      setModel(s.model || 'nova-2')
     })
   }, [])
 
   const handleSave = async () => {
-    await window.electronAPI.saveSettings({ deepgramApiKey: apiKey, language, model })
+    await window.electronAPI.saveSettings({ whisperModel, language })
     setSaved(true)
     setTimeout(() => setSaved(false), 2200)
   }
@@ -70,23 +67,16 @@ export default function SettingsApp() {
         </div>
       </div>
 
-      {/* API Key */}
-      <SettingRow label="Deepgram API Key">
-        <div style={{ position: 'relative' }}>
-          <input
-            type={showKey ? 'text' : 'password'}
-            value={apiKey}
-            onChange={e => setApiKey(e.target.value)}
-            placeholder="dg_xxxxxxxxxxxxxxxx"
-            style={{ ...inputStyle, paddingRight: 52 }}
-          />
-          <button onClick={() => setShowKey(v => !v)} style={{
-            position: 'absolute', right: 9, top: '50%', transform: 'translateY(-50%)',
-            background: 'none', border: 'none', color: C.text3, cursor: 'pointer',
-            fontSize: 11, fontFamily: 'inherit', padding: '2px 4px',
-          }}>{showKey ? 'Hide' : 'Show'}</button>
-        </div>
-        <Hint>Free key at <A href="https://console.deepgram.com">console.deepgram.com</A></Hint>
+      {/* Whisper Model */}
+      <SettingRow label="Whisper Model">
+        <select value={whisperModel} onChange={e => setWhisperModel(e.target.value)}
+          style={{ ...inputStyle, cursor: 'pointer' }}>
+          <option value="base">Base (fast, ~142MB)</option>
+          <option value="small">Small (balanced, ~462MB)</option>
+          <option value="medium">Medium (accurate, ~1.5GB)</option>
+          <option value="tiny">Tiny (fastest, ~75MB)</option>
+        </select>
+        <Hint>Runs 100% locally via whisper.cpp — no API key needed</Hint>
       </SettingRow>
 
       {/* Language */}
@@ -94,23 +84,10 @@ export default function SettingsApp() {
         <select value={language} onChange={e => setLanguage(e.target.value)}
           style={{ ...inputStyle, cursor: 'pointer' }}>
           <option value="en">English</option>
-          <option value="en-US">English (US)</option>
-          <option value="en-GB">English (UK)</option>
           <option value="es">Spanish</option>
           <option value="fr">French</option>
           <option value="de">German</option>
           <option value="ja">Japanese</option>
-        </select>
-      </SettingRow>
-
-      {/* Model */}
-      <SettingRow label="Model">
-        <select value={model} onChange={e => setModel(e.target.value)}
-          style={{ ...inputStyle, cursor: 'pointer' }}>
-          <option value="nova-2">Nova 2 (Recommended)</option>
-          <option value="nova-3">Nova 3</option>
-          <option value="enhanced">Enhanced</option>
-          <option value="base">Base</option>
         </select>
       </SettingRow>
 
@@ -160,13 +137,6 @@ function SettingRow({ label, children }: { label: string; children: React.ReactN
 
 function Hint({ children }: { children: React.ReactNode }) {
   return <div style={{ fontSize: 11, color: '#52525b', marginTop: 5 }}>{children}</div>
-}
-
-function A({ href, children }: { href: string; children: React.ReactNode }) {
-  return (
-    <span style={{ color: '#a1a1aa', cursor: 'pointer', textDecoration: 'none' }}
-      onClick={() => window.open?.(href)}>{children}</span>
-  )
 }
 
 const inputStyle: React.CSSProperties = {

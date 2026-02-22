@@ -3,6 +3,7 @@ import { app } from 'electron'
 import path from 'path'
 
 let db: Database.Database
+let snippetRegexCache: { trigger: string; expansion: string; re: RegExp }[] | null = null
 
 export function getDb(): Database.Database {
   if (!db) {
@@ -48,20 +49,29 @@ export function getSnippets() {
   return getDb().prepare('SELECT * FROM snippets ORDER BY created_at DESC').all()
 }
 export function insertSnippet(trigger: string, expansion: string) {
+  snippetRegexCache = null
   return getDb().prepare('INSERT INTO snippets (trigger, expansion) VALUES (?,?)').run(trigger, expansion)
 }
 export function updateSnippet(id: number, trigger: string, expansion: string) {
+  snippetRegexCache = null
   return getDb().prepare('UPDATE snippets SET trigger=?, expansion=? WHERE id=?').run(trigger, expansion, id)
 }
 export function deleteSnippet(id: number) {
+  snippetRegexCache = null
   return getDb().prepare('DELETE FROM snippets WHERE id=?').run(id)
 }
 export function applySnippets(text: string): string {
-  const snippets = getSnippets() as { trigger: string; expansion: string }[]
+  if (!snippetRegexCache) {
+    const rows = getSnippets() as { trigger: string; expansion: string }[]
+    snippetRegexCache = rows.map(s => ({
+      trigger: s.trigger,
+      expansion: s.expansion,
+      re: new RegExp(`\\b${s.trigger.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi'),
+    }))
+  }
   let result = text
-  for (const s of snippets) {
-    const re = new RegExp(`\\b${s.trigger.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi')
-    result = result.replace(re, s.expansion)
+  for (const s of snippetRegexCache) {
+    result = result.replace(s.re, s.expansion)
   }
   return result
 }
@@ -73,4 +83,8 @@ export function incrementStats(words: number, seconds: number) {
 }
 export function resetStats() {
   return getDb().prepare('UPDATE stats SET total_words=0, total_sessions=0, total_seconds=0 WHERE id=1').run()
+}
+
+export function initDb(): void {
+  getDb() // triggers lazy init — throws if DB cannot be opened
 }

@@ -2,12 +2,12 @@ import React, { useEffect, useRef, useState, useCallback } from 'react'
 
 type AppState = 'idle' | 'recording' | 'processing' | 'error'
 interface ElectronAPI {
-  onStateChange:       (cb: (d: { state: string; message?: string }) => void) => void
-  onTranscript:        (cb: (d: { text: string }) => void) => void
-  onInterimTranscript: (cb: (d: { text: string }) => void) => void
-  onStartAudioCapture: (cb: () => void) => void
-  onStopAudioCapture:  (cb: () => void) => void
-  onPlaySound:         (cb: (t: 'start' | 'stop') => void) => void
+  onStateChange:       (cb: (d: { state: string; message?: string }) => void) => () => void
+  onTranscript:        (cb: (d: { text: string }) => void) => () => void
+  onInterimTranscript: (cb: (d: { text: string }) => void) => () => void
+  onStartAudioCapture: (cb: () => void) => () => void
+  onStopAudioCapture:  (cb: () => void) => () => void
+  onPlaySound:         (cb: (t: 'start' | 'stop') => void) => () => void
   sendAudioChunk:      (c: ArrayBuffer) => void
   sendFinalStats:      (d: { wordCount: number }) => void
   showContextMenu:     () => void
@@ -146,16 +146,19 @@ export default function PillApp() {
 
   // ── IPC ───────────────────────────────────────────────────────────────────
   useEffect(() => {
-    window.electronAPI.onStateChange(({ state, message }) => {
-      setAppState(state as AppState)
-      if (message) setErrorMsg(message)
-    })
-    window.electronAPI.onTranscript(() => {/* text is pasted directly — no pill display */})
-    window.electronAPI.onInterimTranscript(() => {/* streaming disabled */})
-    window.electronAPI.onStartAudioCapture(() => startAudio())
-    window.electronAPI.onStopAudioCapture(() => stopAudio())
-    window.electronAPI.onPlaySound((type) => playBeep(type))
+    const cleanups = [
+      window.electronAPI.onStateChange(({ state, message }) => {
+        setAppState(state as AppState)
+        if (message) setErrorMsg(message)
+      }),
+      window.electronAPI.onTranscript(() => {}),
+      window.electronAPI.onInterimTranscript(() => {}),
+      window.electronAPI.onStartAudioCapture(() => startAudio()),
+      window.electronAPI.onStopAudioCapture(() => stopAudio()),
+      window.electronAPI.onPlaySound((type) => playBeep(type)),
+    ]
     runIdleAnim()
+    return () => cleanups.forEach(fn => fn())
   }, [startAudio, stopAudio, runIdleAnim])
 
   const rec  = appState === 'recording'

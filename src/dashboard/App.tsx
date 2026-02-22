@@ -24,9 +24,8 @@ interface Stats {
 }
 
 interface AppSettings {
-  deepgramApiKey: string
+  whisperModel: string
   language: string
-  model: string
 }
 
 // ── Design tokens ──────────────────────────────────────────────────────────────
@@ -141,7 +140,7 @@ export default function App() {
   const [history, setHistory] = useState<HistoryItem[]>([])
   const [snippets, setSnippets] = useState<Snippet[]>([])
   const [stats, setStats] = useState<Stats | null>(null)
-  const [settings, setSettings] = useState<AppSettings>({ deepgramApiKey: '', language: 'en', model: 'nova-2' })
+  const [settings, setSettings] = useState<AppSettings>({ whisperModel: 'base', language: 'en' })
   const [liveFlash, setLiveFlash] = useState(false)
   const [copied, setCopied] = useState<string | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
@@ -151,9 +150,8 @@ export default function App() {
     fetch('/api/snippets').then(r => r.json()).then(setSnippets).catch(() => {})
     fetch('/api/stats').then(r => r.json()).then(setStats).catch(() => {})
     fetch('/api/settings').then(r => r.json()).then(d => setSettings({
-      deepgramApiKey: d.deepgramApiKey || '',
+      whisperModel: d.whisperModel || 'base',
       language: d.language || 'en',
-      model: d.model || 'nova-2',
     })).catch(() => {})
 
     const ws = new WebSocket(`ws://localhost:7789`)
@@ -538,7 +536,6 @@ function SettingsPage({ settings, setSettings }: {
   setSettings: React.Dispatch<React.SetStateAction<AppSettings>>
 }) {
   const [saved, setSaved] = useState(false)
-  const [showKey, setShowKey] = useState(false)
 
   const handleSave = async () => {
     await fetch('/api/settings', {
@@ -551,33 +548,22 @@ function SettingsPage({ settings, setSettings }: {
 
   return (
     <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-      <PageHeader title="Settings" subtitle="API and transcription configuration" />
+      <PageHeader title="Settings" subtitle="Local transcription configuration" />
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px 28px' }}>
         <div style={{ maxWidth: 480 }}>
 
-          {/* API Key */}
-          <Section title="Deepgram API Key">
-            <div style={{ position: 'relative' }}>
-              <input
-                type={showKey ? 'text' : 'password'}
-                value={settings.deepgramApiKey}
-                onChange={e => setSettings(s => ({ ...s, deepgramApiKey: e.target.value }))}
-                placeholder="dg_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                style={{ ...inputCss, paddingRight: 70 }}
-              />
-              <button onClick={() => setShowKey(v => !v)} style={{
-                position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
-                background: 'none', border: 'none', color: C.text3, cursor: 'pointer',
-                fontSize: 11, fontFamily: 'inherit', padding: '2px 4px',
-              }}>{showKey ? 'Hide' : 'Show'}</button>
-            </div>
+          {/* Whisper Model */}
+          <Section title="Whisper Model">
+            <select value={settings.whisperModel} onChange={e => setSettings(s => ({ ...s, whisperModel: e.target.value }))}
+              style={{ ...inputCss, cursor: 'pointer' }}>
+              <option value="base">Base (fast, ~142MB)</option>
+              <option value="small">Small (balanced, ~462MB)</option>
+              <option value="medium">Medium (accurate, ~1.5GB)</option>
+              <option value="tiny">Tiny (fastest, ~75MB)</option>
+            </select>
             <div style={{ fontSize: 11, color: C.text3, marginTop: 6 }}>
-              Get a free key at{' '}
-              <a href="https://console.deepgram.com" target="_blank" rel="noreferrer"
-                style={{ color: C.text2, textDecoration: 'none' }}>
-                console.deepgram.com
-              </a>
+              Runs 100% locally via whisper.cpp — no API key or internet needed.
             </div>
           </Section>
 
@@ -586,9 +572,6 @@ function SettingsPage({ settings, setSettings }: {
             <select value={settings.language} onChange={e => setSettings(s => ({ ...s, language: e.target.value }))}
               style={{ ...inputCss, cursor: 'pointer' }}>
               <option value="en">English</option>
-              <option value="en-US">English (US)</option>
-              <option value="en-GB">English (UK)</option>
-              <option value="en-AU">English (Australia)</option>
               <option value="es">Spanish</option>
               <option value="fr">French</option>
               <option value="de">German</option>
@@ -596,21 +579,6 @@ function SettingsPage({ settings, setSettings }: {
               <option value="ko">Korean</option>
               <option value="zh">Chinese</option>
             </select>
-          </Section>
-
-          {/* Model */}
-          <Section title="Model">
-            <select value={settings.model} onChange={e => setSettings(s => ({ ...s, model: e.target.value }))}
-              style={{ ...inputCss, cursor: 'pointer' }}>
-              <option value="nova-2">Nova 2 (Recommended)</option>
-              <option value="nova-3">Nova 3</option>
-              <option value="nova">Nova</option>
-              <option value="enhanced">Enhanced</option>
-              <option value="base">Base</option>
-            </select>
-            <div style={{ fontSize: 11, color: C.text3, marginTop: 6 }}>
-              Nova 2 offers the best balance of speed and accuracy.
-            </div>
           </Section>
 
           <button onClick={handleSave} style={{

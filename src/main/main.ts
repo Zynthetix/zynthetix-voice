@@ -1,5 +1,5 @@
-import { createClient } from '@deepgram/sdk';
-import { spawnSync } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
+import https from 'https';
 import {
   app,
   BrowserWindow,
@@ -8,20 +8,22 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  screen,
   shell,
   Tray,
 } from 'electron';
 import Store from 'electron-store';
 import path from 'path';
 import { uIOhook, UiohookKey } from 'uiohook-napi';
-import { applySnippets, incrementStats, insertHistory } from './db';
+import fs from 'fs';
+import os from 'os';
+import { applySnippets, incrementStats, insertHistory, initDb } from './db';
 import { broadcast, DASHBOARD_PORT, startServer } from './server';
 
 const isDev = process.env.NODE_ENV === 'development';
 const store = new Store<{
-  deepgramApiKey: string;
+  whisperModel: string;
   language: string;
-  model: string;
   pillX: number;
   pillY: number;
 }>();
@@ -29,6 +31,111 @@ const store = new Store<{
 let pillWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
+
+// ─── Model management ─────────────────────────────────────────────────────────
+const MODEL_FILES: Record<string, string> = {
+  tiny:   'ggml-tiny.bin',
+  base:   'ggml-base.bin',
+  small:  'ggml-small.bin',
+  medium: 'ggml-medium.bin',
+};
+
+function getWhisperModelsDir(): string {
+  // In packaged app, nodejs-whisper is in app.asar.unpacked (via asarUnpack).
+  // In dev, it's a regular node_modules path.
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'nodejs-whisper', 'cpp', 'whisper.cpp', 'models')
+    : path.join(__dirname, '../../node_modules/nodejs-whisper/cpp/whisper.cpp/models');
+}
+
+function modelExists(modelName: string): boolean {
+  const filename = MODEL_FILES[modelName] ?? `ggml-${modelName}.bin`;
+  return fs.existsSync(path.join(getWhisperModelsDir(), filename));
+}
+
+async function downloadModel(modelName: string): Promise<void> {
+  const filename = MODEL_FILES[modelName] ?? `ggml-${modelName}.bin`;
+  const dest = path.join(getWhisperModelsDir(), filename);
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+
+  const url = `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${filename}`;
+
+  return new Promise((resolve, reject) => {
+    const doDownload = (downloadUrl: string, redirectCount = 0) => {
+      if (redirectCount > 5) { reject(new Error('Too many redirects')); return; }
+      https.get(downloadUrl, (res) => {
+        const loc = res.headers.location;
+        if ((res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308) && loc) {
+          doDownload(loc, redirectCount + 1);
+          return;
+        }
+        if (res.statusCode !== 200) {
+          reject(new Error(`Download failed: HTTP ${res.statusCode}`));
+          return;
+        }
+        const total = parseInt(res.headers['content-length'] ?? '0', 10);
+        let received = 0;
+        const file = fs.createWriteStream(dest);
+        res.on('data', (chunk: Buffer) => {
+          received += chunk.length;
+          if (total > 0 && tray) {
+            const pct = Math.round((received / total) * 100);
+            tray.setTitle(`🎙 ${pct}%`);
+          }
+        });
+        res.pipe(file);
+        file.on('finish', () => { file.close(); tray?.setTitle('🎙'); resolve(); });
+        file.on('error', (err) => { try { fs.unlinkSync(dest); } catch { /* ignore */ } reject(err); });
+      }).on('error', reject);
+    };
+    doDownload(url);
+  });
+}
+
+async function ensureModelReady(modelName: string): Promise<void> {
+  if (modelExists(modelName)) return;
+  console.log(`[whisper] Model "${modelName}" not found — downloading…`);
+  tray?.setTitle('🎙 DL…');
+  pillWindow?.webContents.send('state-change', { state: 'processing' });
+  try {
+    await downloadModel(modelName);
+    console.log(`[whisper] Model "${modelName}" ready.`);
+  } catch (err) {
+    console.error('[whisper] Model download failed:', err);
+    pillWindow?.webContents.send('state-change', { state: 'error', message: `Model download failed: ${err}` });
+    setTimeout(() => pillWindow?.webContents.send('state-change', { state: 'idle' }), 4000);
+    throw err;
+  } finally {
+    tray?.setTitle('🎙');
+    pillWindow?.webContents.send('state-change', { state: 'idle' });
+  }
+}
+
+function getWhisperBinaryPath(): string {
+  const bin = 'whisper-cli';
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'nodejs-whisper', 'cpp', 'whisper.cpp', 'build', 'bin', bin)
+    : path.join(__dirname, '../../node_modules/nodejs-whisper/cpp/whisper.cpp/build/bin', bin);
+}
+
+function runWhisper(wavFile: string, modelName: string, language: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const modelFile = path.join(getWhisperModelsDir(), MODEL_FILES[modelName] ?? `ggml-${modelName}.bin`);
+    const proc = spawn(
+      getWhisperBinaryPath(),
+      ['-l', language, '-m', modelFile, '-f', wavFile],
+      { stdio: ['ignore', 'pipe', 'ignore'] }  // silence all binary output
+    );
+    let out = '';
+    proc.stdout.on('data', (d: Buffer) => { out += d.toString(); });
+    proc.on('close', (code) => {
+      if (code === 0) resolve(out);
+      else reject(new Error(`whisper-cli exited with code ${code}`));
+    });
+    proc.on('error', reject);
+  });
+}
+
 const audioBuffer: Buffer[] = []; // accumulates raw PCM while recording
 let isRecording = false;
 let recordingStartTime = 0;
@@ -69,7 +176,7 @@ function createSettingsWindow() {
 }
 
 function createPillWindow() {
-  const { width } = require('electron').screen.getPrimaryDisplay().workAreaSize;
+  const { width } = screen.getPrimaryDisplay().workAreaSize;
   const x = (store.get('pillX') as number) ?? width - 210;
   const y = (store.get('pillY') as number) ?? 20;
   pillWindow = new BrowserWindow({
@@ -161,17 +268,15 @@ ipcMain.on(
 );
 
 ipcMain.handle('get-settings', () => ({
-  deepgramApiKey: store.get('deepgramApiKey'),
+  whisperModel: store.get('whisperModel') || 'base',
   language: store.get('language') || 'en',
-  model: store.get('model') || 'nova-2',
 }));
 
 ipcMain.handle(
   'save-settings',
-  (_e, s: { deepgramApiKey?: string; language?: string; model?: string }) => {
-    if (s.deepgramApiKey) store.set('deepgramApiKey', s.deepgramApiKey);
+  (_e, s: { whisperModel?: string; language?: string }) => {
+    if (s.whisperModel) store.set('whisperModel', s.whisperModel);
     if (s.language) store.set('language', s.language);
-    if (s.model) store.set('model', s.model);
     return { ok: true };
   }
 );
@@ -210,23 +315,8 @@ function createWav(
   return Buffer.concat([header, pcm]);
 }
 
-// ─── Deepgram ─────────────────────────────────────────────────────────────────
+// ─── Local Whisper (replaces Deepgram) ────────────────────────────────────────
 async function startRecording() {
-  const apiKey = store.get('deepgramApiKey') as string;
-  if (!apiKey) {
-    dialog
-      .showMessageBox({
-        type: 'warning',
-        title: 'API Key Missing',
-        message: 'Please set your Deepgram API key in the dashboard.',
-        buttons: ['Open Dashboard', 'OK'],
-      })
-      .then((r) => {
-        if (r.response === 0)
-          shell.openExternal(`http://localhost:${DASHBOARD_PORT}`);
-      });
-    return;
-  }
   isRecording = true;
   recordingStartTime = Date.now();
   sessionWords = 0;
@@ -239,56 +329,80 @@ async function startRecording() {
 async function stopRecording() {
   if (!isRecording) return;
   isRecording = false;
-  const capturedChunks = audioBuffer.splice(0); // grab & clear atomically
+  const capturedChunks = audioBuffer.splice(0);
   pillWindow?.webContents.send('stop-audio-capture');
   pillWindow?.webContents.send('play-sound', 'stop');
   pillWindow?.webContents.send('state-change', { state: 'processing' });
 
-  // Yield so the renderer can paint the processing state before we assemble the WAV
+  // Ensure model is downloaded before attempting transcription
+  const whisperModelForCheck = (store.get('whisperModel') as string) || 'base';
+  try {
+    await ensureModelReady(whisperModelForCheck);
+  } catch {
+    pillWindow?.webContents.send('state-change', { state: 'idle' });
+    return;
+  }
+
   await new Promise((resolve) => setImmediate(resolve));
 
   const secs = Math.round((Date.now() - recordingStartTime) / 1000);
 
   try {
-    const apiKey = store.get('deepgramApiKey') as string;
-    const language = (store.get('language') as string) || 'en';
-    const model = (store.get('model') as string) || 'nova-2';
-    const client = createClient(apiKey);
     const wav = createWav(Buffer.concat(capturedChunks));
-    const { result, error } = await client.listen.prerecorded.transcribeFile(
-      wav,
-      {
-        model,
-        language,
-        smart_format: true,
-        punctuate: true,
-        profanity_filter: false,
-        diarize: false,
-        mimetype: 'audio/wav',
+    const tmpFile = path.join(os.tmpdir(), `zynthetix-${Date.now()}.wav`);
+    fs.writeFileSync(tmpFile, wav);
+
+    const whisperModel = (store.get('whisperModel') as string) || 'base';
+    // Whisper uses ISO 639-1 codes only (e.g. 'en', not 'en-US')
+    const language = ((store.get('language') as string) || 'en').split('-')[0];
+
+    try {
+      const transcript = await runWhisper(tmpFile, whisperModel, language);
+
+      if (transcript?.trim()) {
+        // Strip whisper timestamp lines: [00:00:00.000 --> 00:00:02.000]
+        const cleanText = transcript
+          .replace(/\[\d{2}:\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}:\d{2}\.\d{3}\]\s*/g, '')
+          .replace(/\n+/g, ' ')
+          .trim();
+        if (!cleanText) {
+          pillWindow?.webContents.send('state-change', { state: 'idle' });
+          return;
+        }
+        const expanded = applySnippets(cleanText);
+        typeText(expanded);
+        const wc = expanded.trim().split(/\s+/).filter(Boolean).length;
+        sessionWords = wc;
+        insertHistory(expanded, wc, secs);
+        broadcast({
+          type: 'history-item',
+          item: {
+            text: expanded,
+            word_count: wc,
+            duration_sec: secs,
+            created_at: new Date().toISOString(),
+          },
+        });
+        if (wc > 0 || secs > 1) incrementStats(wc, secs);
       }
-    );
-    if (error) throw error;
-    const transcript =
-      result?.results?.channels?.[0]?.alternatives?.[0]?.transcript ?? '';
-    if (transcript.trim()) {
-      const expanded = applySnippets(transcript);
-      typeText(expanded);
-      const wc = expanded.trim().split(/\s+/).filter(Boolean).length;
-      sessionWords = wc;
-      insertHistory(expanded, wc, secs);
-      broadcast({
-        type: 'history-item',
-        item: {
-          text: expanded,
-          word_count: wc,
-          duration_sec: secs,
-          created_at: new Date().toISOString(),
-        },
+    } catch (err) {
+      console.error('Transcription error:', err);
+      pillWindow?.webContents.send('state-change', {
+        state: 'error',
+        message: String(err),
       });
-      if (wc > 0 || secs > 1) incrementStats(wc, secs);
+      setTimeout(
+        () => pillWindow?.webContents.send('state-change', { state: 'idle' }),
+        3000
+      );
+      return;
+    } finally {
+      // Always delete the temp WAV regardless of success or failure
+      try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
     }
   } catch (err) {
-    console.error('Transcription error:', err);
+    // Covers WAV creation or file-write failures (pre-transcription)
+    console.error('Recording error:', err);
     pillWindow?.webContents.send('state-change', {
       state: 'error',
       message: String(err),
@@ -366,6 +480,18 @@ uIOhook.on('keyup', (e) => {
 
 // ─── App lifecycle ─────────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
+  // Initialize DB eagerly — show error dialog and quit if it fails
+  try {
+    initDb();
+  } catch (err) {
+    dialog.showErrorBox(
+      'Zynthetix Voice — Database Error',
+      `Failed to open the database:\n${err}\n\nCheck disk space and permissions in:\n${app.getPath('userData')}`
+    );
+    app.quit();
+    return;
+  }
+
   createPillWindow();
   createTray();
   startServer(
@@ -376,26 +502,9 @@ app.whenReady().then(async () => {
   );
   uIOhook.start();
 
-  // First-launch: prompt for API key if not configured
-  const apiKey = store.get('deepgramApiKey') as string | undefined;
-  if (!apiKey || apiKey.trim() === '') {
-    const { response } = await dialog.showMessageBox({
-      type: 'info',
-      title: 'Welcome to Zynthetix Voice',
-      message: 'One quick step before you start',
-      detail:
-        'Zynthetix Voice uses Deepgram for speech recognition. You need a free API key to get started.\n\nSign up at console.deepgram.com — no credit card required. You get $200 in free credits (~560 hours of transcription).\n\nPaste your key in Settings after clicking Open Settings.',
-      buttons: ['Open Settings', 'Get API Key (browser)', 'Later'],
-      defaultId: 0,
-      cancelId: 2,
-    });
-    if (response === 0) createSettingsWindow();
-    if (response === 1) {
-      shell.openExternal('https://console.deepgram.com');
-      // Give them a moment then open settings
-      setTimeout(() => createSettingsWindow(), 1500);
-    }
-  }
+  // Kick off model download in background so first transcription is instant
+  const defaultModel = (store.get('whisperModel') as string) || 'base';
+  ensureModelReady(defaultModel).catch(() => { /* error already surfaced in pill */ });
 });
 
 app.on('window-all-closed', () => {
