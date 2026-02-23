@@ -4,7 +4,7 @@ A WisprFlow-like macOS speech-to-text app. Press a hotkey and speak — your wor
 
 ## Download
 
-**[⬇ Download Zynthetix Voice-2.0.0-arm64.dmg](https://github.com/Zynthetix/zynthetix-voice/releases/download/v2.0.0/Zynthetix%20Voice-2.0.0-arm64.dmg)**
+**[⬇ Download Zynthetix Voice-2.0.2-arm64.dmg](https://github.com/Zynthetix/zynthetix-voice/releases/download/v2.0.2/Zynthetix%20Voice-2.0.2-arm64.dmg)**
 
 > Requires macOS with Apple Silicon (M1/M2/M3/M4). No Node.js or project setup needed — just download, open the DMG, and drag the app to your Applications folder.
 
@@ -91,7 +91,7 @@ npm run start
 ### Build distributable DMG
 ```bash
 npm run dist
-# Output: release/Zynthetix Voice-2.0.0-arm64.dmg
+# Output: release/Zynthetix Voice-2.0.2-arm64.dmg
 ```
 
 ### Download & build Whisper model (for dev)
