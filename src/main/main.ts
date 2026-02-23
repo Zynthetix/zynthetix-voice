@@ -1,5 +1,4 @@
 import { spawn, spawnSync } from 'child_process';
-import https from 'https';
 import {
   app,
   BrowserWindow,
@@ -13,11 +12,12 @@ import {
   Tray,
 } from 'electron';
 import Store from 'electron-store';
+import fs from 'fs';
+import https from 'https';
+import os from 'os';
 import path from 'path';
 import { uIOhook, UiohookKey } from 'uiohook-napi';
-import fs from 'fs';
-import os from 'os';
-import { applySnippets, incrementStats, insertHistory, initDb } from './db';
+import { applySnippets, incrementStats, initDb, insertHistory } from './db';
 import { broadcast, DASHBOARD_PORT, startServer } from './server';
 
 const isDev = process.env.NODE_ENV === 'development';
@@ -34,9 +34,9 @@ let tray: Tray | null = null;
 
 // ─── Model management ─────────────────────────────────────────────────────────
 const MODEL_FILES: Record<string, string> = {
-  tiny:   'ggml-tiny.bin',
-  base:   'ggml-base.bin',
-  small:  'ggml-small.bin',
+  tiny: 'ggml-tiny.bin',
+  base: 'ggml-base.bin',
+  small: 'ggml-small.bin',
   medium: 'ggml-medium.bin',
 };
 
@@ -44,8 +44,19 @@ function getWhisperModelsDir(): string {
   // In packaged app, nodejs-whisper is in app.asar.unpacked (via asarUnpack).
   // In dev, it's a regular node_modules path.
   return app.isPackaged
-    ? path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'nodejs-whisper', 'cpp', 'whisper.cpp', 'models')
-    : path.join(__dirname, '../../node_modules/nodejs-whisper/cpp/whisper.cpp/models');
+    ? path.join(
+        process.resourcesPath,
+        'app.asar.unpacked',
+        'node_modules',
+        'nodejs-whisper',
+        'cpp',
+        'whisper.cpp',
+        'models'
+      )
+    : path.join(
+        __dirname,
+        '../../node_modules/nodejs-whisper/cpp/whisper.cpp/models'
+      );
 }
 
 function modelExists(modelName: string): boolean {
@@ -62,31 +73,53 @@ async function downloadModel(modelName: string): Promise<void> {
 
   return new Promise((resolve, reject) => {
     const doDownload = (downloadUrl: string, redirectCount = 0) => {
-      if (redirectCount > 5) { reject(new Error('Too many redirects')); return; }
-      https.get(downloadUrl, (res) => {
-        const loc = res.headers.location;
-        if ((res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308) && loc) {
-          doDownload(loc, redirectCount + 1);
-          return;
-        }
-        if (res.statusCode !== 200) {
-          reject(new Error(`Download failed: HTTP ${res.statusCode}`));
-          return;
-        }
-        const total = parseInt(res.headers['content-length'] ?? '0', 10);
-        let received = 0;
-        const file = fs.createWriteStream(dest);
-        res.on('data', (chunk: Buffer) => {
-          received += chunk.length;
-          if (total > 0 && tray) {
-            const pct = Math.round((received / total) * 100);
-            tray.setTitle(`🎙 ${pct}%`);
+      if (redirectCount > 5) {
+        reject(new Error('Too many redirects'));
+        return;
+      }
+      https
+        .get(downloadUrl, (res) => {
+          const loc = res.headers.location;
+          if (
+            (res.statusCode === 301 ||
+              res.statusCode === 302 ||
+              res.statusCode === 307 ||
+              res.statusCode === 308) &&
+            loc
+          ) {
+            doDownload(loc, redirectCount + 1);
+            return;
           }
-        });
-        res.pipe(file);
-        file.on('finish', () => { file.close(); tray?.setTitle('🎙'); resolve(); });
-        file.on('error', (err) => { try { fs.unlinkSync(dest); } catch { /* ignore */ } reject(err); });
-      }).on('error', reject);
+          if (res.statusCode !== 200) {
+            reject(new Error(`Download failed: HTTP ${res.statusCode}`));
+            return;
+          }
+          const total = parseInt(res.headers['content-length'] ?? '0', 10);
+          let received = 0;
+          const file = fs.createWriteStream(dest);
+          res.on('data', (chunk: Buffer) => {
+            received += chunk.length;
+            if (total > 0 && tray) {
+              const pct = Math.round((received / total) * 100);
+              tray.setTitle(`🎙 ${pct}%`);
+            }
+          });
+          res.pipe(file);
+          file.on('finish', () => {
+            file.close();
+            tray?.setTitle('🎙');
+            resolve();
+          });
+          file.on('error', (err) => {
+            try {
+              fs.unlinkSync(dest);
+            } catch {
+              /* ignore */
+            }
+            reject(err);
+          });
+        })
+        .on('error', reject);
     };
     doDownload(url);
   });
@@ -102,8 +135,14 @@ async function ensureModelReady(modelName: string): Promise<void> {
     console.log(`[whisper] Model "${modelName}" ready.`);
   } catch (err) {
     console.error('[whisper] Model download failed:', err);
-    pillWindow?.webContents.send('state-change', { state: 'error', message: `Model download failed: ${err}` });
-    setTimeout(() => pillWindow?.webContents.send('state-change', { state: 'idle' }), 4000);
+    pillWindow?.webContents.send('state-change', {
+      state: 'error',
+      message: `Model download failed: ${err}`,
+    });
+    setTimeout(
+      () => pillWindow?.webContents.send('state-change', { state: 'idle' }),
+      4000
+    );
     throw err;
   } finally {
     tray?.setTitle('🎙');
@@ -114,20 +153,43 @@ async function ensureModelReady(modelName: string): Promise<void> {
 function getWhisperBinaryPath(): string {
   const bin = 'whisper-cli';
   return app.isPackaged
-    ? path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'nodejs-whisper', 'cpp', 'whisper.cpp', 'build', 'bin', bin)
-    : path.join(__dirname, '../../node_modules/nodejs-whisper/cpp/whisper.cpp/build/bin', bin);
+    ? path.join(
+        process.resourcesPath,
+        'app.asar.unpacked',
+        'node_modules',
+        'nodejs-whisper',
+        'cpp',
+        'whisper.cpp',
+        'build',
+        'bin',
+        bin
+      )
+    : path.join(
+        __dirname,
+        '../../node_modules/nodejs-whisper/cpp/whisper.cpp/build/bin',
+        bin
+      );
 }
 
-function runWhisper(wavFile: string, modelName: string, language: string): Promise<string> {
+function runWhisper(
+  wavFile: string,
+  modelName: string,
+  language: string
+): Promise<string> {
   return new Promise((resolve, reject) => {
-    const modelFile = path.join(getWhisperModelsDir(), MODEL_FILES[modelName] ?? `ggml-${modelName}.bin`);
+    const modelFile = path.join(
+      getWhisperModelsDir(),
+      MODEL_FILES[modelName] ?? `ggml-${modelName}.bin`
+    );
     const proc = spawn(
       getWhisperBinaryPath(),
       ['-l', language, '-m', modelFile, '-f', wavFile],
-      { stdio: ['ignore', 'pipe', 'ignore'] }  // silence all binary output
+      { stdio: ['ignore', 'pipe', 'ignore'] } // silence all binary output
     );
     let out = '';
-    proc.stdout.on('data', (d: Buffer) => { out += d.toString(); });
+    proc.stdout.on('data', (d: Buffer) => {
+      out += d.toString();
+    });
     proc.on('close', (code) => {
       if (code === 0) resolve(out);
       else reject(new Error(`whisper-cli exited with code ${code}`));
@@ -362,7 +424,10 @@ async function stopRecording() {
       if (transcript?.trim()) {
         // Strip whisper timestamp lines: [00:00:00.000 --> 00:00:02.000]
         const cleanText = transcript
-          .replace(/\[\d{2}:\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}:\d{2}\.\d{3}\]\s*/g, '')
+          .replace(
+            /\[\d{2}:\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}:\d{2}\.\d{3}\]\s*/g,
+            ''
+          )
           .replace(/\n+/g, ' ')
           .trim();
         if (!cleanText) {
@@ -398,7 +463,11 @@ async function stopRecording() {
       return;
     } finally {
       // Always delete the temp WAV regardless of success or failure
-      try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+      try {
+        fs.unlinkSync(tmpFile);
+      } catch {
+        /* ignore */
+      }
     }
   } catch (err) {
     // Covers WAV creation or file-write failures (pre-transcription)
@@ -479,6 +548,68 @@ uIOhook.on('keyup', (e) => {
 });
 
 // ─── App lifecycle ─────────────────────────────────────────────────────────────
+let uiohookStarted = false;
+
+/**
+ * Perform a real-world accessibility test — systemPreferences.isTrustedAccessibilityClient
+ * can return true on macOS 26 Tahoe while the low-level API still rejects access,
+ * which causes uiohook-napi's C code to call abort().
+ * Spawn a quick osascript that exercises System Events; if it fails, accessibility is
+ * genuinely not available regardless of what Electron's API reports.
+ */
+function isAccessibilityReallyAvailable(): boolean {
+  try {
+    const result = spawnSync(
+      'osascript',
+      ['-e', 'tell application "System Events" to get name of first process'],
+      { timeout: 3000, stdio: ['ignore', 'pipe', 'pipe'] }
+    );
+    return result.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+function tryStartUIOhook() {
+  // On macOS, check accessibility permission before starting uiohook
+  // (uiohook-napi will abort() if accessibility is not granted)
+  if (process.platform === 'darwin') {
+    const { systemPreferences } =
+      require('electron') as typeof import('electron');
+    // Prompt + check via Electron API
+    const trusted = systemPreferences.isTrustedAccessibilityClient(true);
+    if (!trusted) {
+      console.log(
+        '[uiohook] Accessibility not granted (Electron check) — will retry in 5s.'
+      );
+      console.log(
+        '[uiohook] Please enable it in System Settings → Privacy & Security → Accessibility.'
+      );
+      setTimeout(tryStartUIOhook, 5000);
+      return;
+    }
+    // Double-check with a real System Events call (catches macOS Tahoe false-positives)
+    if (!isAccessibilityReallyAvailable()) {
+      console.log(
+        '[uiohook] Accessibility API reports trusted but real test failed — will retry in 5s.'
+      );
+      console.log(
+        '[uiohook] Grant access in System Settings → Privacy & Security → Accessibility.'
+      );
+      setTimeout(tryStartUIOhook, 5000);
+      return;
+    }
+  }
+  try {
+    uIOhook.start();
+    uiohookStarted = true;
+    console.log('[uiohook] Global hotkey listener started.');
+  } catch (err) {
+    console.error('[uiohook] Failed to start:', err);
+    setTimeout(tryStartUIOhook, 5000);
+  }
+}
+
 app.whenReady().then(async () => {
   // Initialize DB eagerly — show error dialog and quit if it fails
   try {
@@ -500,11 +631,13 @@ app.whenReady().then(async () => {
       set: (k: string, v: unknown) => void;
     }
   );
-  uIOhook.start();
+  tryStartUIOhook();
 
   // Kick off model download in background so first transcription is instant
   const defaultModel = (store.get('whisperModel') as string) || 'base';
-  ensureModelReady(defaultModel).catch(() => { /* error already surfaced in pill */ });
+  ensureModelReady(defaultModel).catch(() => {
+    /* error already surfaced in pill */
+  });
 });
 
 app.on('window-all-closed', () => {
@@ -512,5 +645,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
-  uIOhook.stop();
+  if (uiohookStarted) {
+    uIOhook.stop();
+  }
 });

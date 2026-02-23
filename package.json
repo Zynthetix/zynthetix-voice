@@ -4,9 +4,10 @@
   "description": "WisprFlow-like speech-to-text for macOS",
   "main": "dist/main/main.js",
   "scripts": {
+    "predev": "tsc -p tsconfig.main.json",
     "dev": "concurrently \"npm run dev:renderer\" \"npm run dev:main\"",
     "dev:renderer": "vite",
-    "dev:main": "wait-on http://localhost:5173 && tsc -p tsconfig.main.json && NODE_ENV=development electron .",
+    "dev:main": "wait-on tcp:5173 && ELECTRON_RUN_AS_NODE= NODE_ENV=development electron .",
     "build": "npm run build:renderer && npm run build:main",
     "build:renderer": "vite build",
     "build:main": "tsc -p tsconfig.main.json",
@@ -16,7 +17,7 @@
     "whisper:build": "cd node_modules/nodejs-whisper/cpp/whisper.cpp && cmake -B build -DGGML_METAL=OFF -DWHISPER_ACCELERATE=ON && cmake --build build --config Release",
     "postinstall": "electron-rebuild -f -w better-sqlite3,uiohook-napi",
     "prestart": "npm run build",
-    "start": "NODE_ENV=production electron ."
+    "start": "ELECTRON_RUN_AS_NODE= NODE_ENV=production electron ."
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.3",
@@ -29,7 +30,7 @@
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.2.1",
     "concurrently": "^8.2.2",
-    "electron": "^29.0.1",
+    "electron": "^29.4.6",
     "electron-builder": "^24.9.1",
     "typescript": "^5.3.3",
     "vite": "^5.1.0",
