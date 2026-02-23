@@ -4,6 +4,26 @@ All notable changes to Zynthetix Voice are documented here.
 
 ---
 
+## [2.0.2] — 2026-02-23
+
+### Fixed
+
+- **CI build failure: `vmmlaq_s32` requires `i8mm` feature** — The GitHub Actions `macos-latest`
+  runner includes Apple Silicon that does not support the `i8mm` instruction at runtime. cmake's
+  `check_cxx_source_runs` correctly detected this and added `+noi8mm` to the mcpu compile flags.
+  However, Apple's clang still defines `__ARM_FEATURE_MATMUL_INT8` in the preprocessor output
+  even when `-mcpu=native+noi8mm` is passed — a clang quirk. This caused `ggml-cpu-quants.c` to
+  enter the `#ifdef __ARM_FEATURE_MATMUL_INT8` code path and call `vmmlaq_s32`, which the
+  compiler then rejected with "requires target feature 'i8mm', but would be inlined into function
+  compiled without support for 'i8mm'". Fixed by adding `-DGGML_NATIVE=OFF` to the `whisper:build`
+  cmake invocation, which bypasses the entire native CPU feature detection block. Metal GPU
+  acceleration is detected independently from the Apple SDK and is fully unaffected.
+  Also removed the unused `-DWHISPER_ACCELERATE=ON` flag (cmake printed a warning that this
+  variable is not used by the project in recent whisper.cpp versions — Accelerate framework is
+  auto-detected via `GGML_BLAS`).
+
+---
+
 ## [2.0.1] — 2026-02-23
 
 ### Fixed

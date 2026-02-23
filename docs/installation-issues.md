@@ -1,6 +1,52 @@
 # Installation Issues — Root Causes & Fixes
 
-Tracked issues discovered during v2.0.0 → v2.0.1 stabilization pass.
+Tracked issues discovered during v2.0.0 → v2.0.2 stabilization pass.
+
+---
+
+## Issue 4 — CI build failure: `vmmlaq_s32` requires `i8mm` on GitHub Actions runner
+
+**Severity:** Critical (CI blocked, no DMG produced on push)
+
+**Symptom (CI log)**
+```
+error: always_inline function 'vmmlaq_s32' requires target feature 'i8mm', but
+would be inlined into function 'ggml_vec_dot_q4_0_q8_0' that is compiled without
+support for 'i8mm'
+4 errors generated.
+make: *** [all] Error 2
+```
+
+**Root cause (three-part)**
+
+1. The `macos-latest` GitHub Actions runner uses Apple Silicon hardware that does **not** support
+   the `i8mm` instruction at runtime. cmake's `check_cxx_source_runs` correctly detected this
+   (the test binary couldn't execute) and added `+noi8mm` to the mcpu compile flags:
+   `-- Adding CPU backend variant ggml-cpu: -mcpu=native+dotprod+noi8mm+nosve+nosme`
+
+2. Despite this, Apple's clang still defines `__ARM_FEATURE_MATMUL_INT8` in the preprocessor
+   macro dump of `-mcpu=native+noi8mm -dM -E -`. This is a clang quirk: the feature macro is
+   tied to the CPU architecture description (which lists i8mm as architecturally present) rather
+   than to whether the instruction is enabled for code generation. cmake interprets this
+   "ARM feature MATMUL_INT8 enabled" and the C code's `#ifdef __ARM_FEATURE_MATMUL_INT8` guard
+   evaluates to true.
+
+3. `ggml-cpu-quants.c` line 1983 then calls `vmmlaq_s32` in a function that is compiled with
+   `+noi8mm`. Clang refuses to inline an `always_inline` i8mm intrinsic into a function
+   that was not compiled with i8mm support → fatal error.
+
+**Fix (v2.0.2)**
+Added `-DGGML_NATIVE=OFF` to the `whisper:build` cmake invocation. With `GGML_NATIVE=OFF`,
+cmake's entire native CPU feature detection block is skipped — it does not run
+`check_cxx_source_runs` for i8mm, does not set `ARM_MCPU_FLAG_FIX`, and does not cause
+`__ARM_FEATURE_MATMUL_INT8` to be emitted. The portable non-i8mm code path is used instead.
+
+`GGML_METAL=ON` is unaffected — Metal GPU detection uses the Apple SDK, not `GGML_NATIVE`.
+
+Also removed the unused `-DWHISPER_ACCELERATE=ON` cmake flag (cmake printed a warning
+"Manually-specified variables not used by the project: WHISPER_ACCELERATE" — in recent
+whisper.cpp versions the Accelerate framework is controlled by `GGML_BLAS` and is
+auto-detected).
 
 ---
 
