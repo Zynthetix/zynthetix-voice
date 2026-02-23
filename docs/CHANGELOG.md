@@ -4,6 +4,38 @@ All notable changes to Zynthetix Voice are documented here.
 
 ---
 
+## [2.0.1] — 2026-02-23
+
+### Fixed
+
+- **`whisper-cli` ENOENT on fresh install** — `postinstall` now compiles `whisper.cpp` via cmake after
+  rebuilding native Node modules. Previously, only `better-sqlite3` and `uiohook-napi` were rebuilt;
+  the `whisper-cli` binary was never produced, causing a fatal ENOENT on every transcription attempt
+  after a clean `npm install`. The build step is non-fatal (wrapped in `|| echo`) so installs on CI
+  runners without cmake still succeed with a warning.
+
+- **`dist` / `pack` shipped DMG without `whisper-cli`** — `dist` and `pack` scripts now run
+  `npm run whisper:build` as a mandatory first step before `electron-builder`. Previously, if the cmake
+  build had never run (or ran with broken flags), `electron-builder`'s `asarUnpack` would copy an empty
+  directory into `app.asar.unpacked`, producing a release where every end-user got ENOENT on transcription.
+
+- **`whisper:build` cmake flags** — Fixed three flag problems in the `whisper:build` script:
+  - `-DGGML_METAL=OFF` → `-DGGML_METAL=ON` (re-enables Metal GPU acceleration on Apple Silicon)
+  - Added `-DWHISPER_BUILD_EXAMPLES=ON` (ensures `whisper-cli` binary is built; it lives in the
+    `examples/` cmake target which may be skipped without this flag)
+  - Added `-DCMAKE_BUILD_TYPE=Release` (was defaulting to `Debug`; Release is ~3× faster at runtime)
+  - Added `--parallel` to `cmake --build` (utilises all CPU cores; cuts build time from ~4 min → ~45 s
+    on M-series chips)
+
+- **Duplicate `ElectronAPI` TypeScript declarations** — `PillApp.tsx` and `SettingsApp.tsx` each
+  declared their own local `interface ElectronAPI` and augmented `Window`, with the two interfaces
+  being out of sync. This caused `TS2300` (duplicate identifier), `TS2339` (property does not exist on
+  `Window`), and `TS7006`/`TS7031` (implicit `any`) errors that blocked CI. Fixed by introducing a
+  single `src/renderer/electron.d.ts` as the authoritative type source (matching `preload.ts`
+  exactly) and removing all local declarations from both components.
+
+---
+
 ## [2.0.0] — 2024
 
 ### 🔄 Breaking Change: Deepgram → Local whisper.cpp

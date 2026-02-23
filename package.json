@@ -1,6 +1,6 @@
 {
   "name": "zynthetix-voice",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "WisprFlow-like speech-to-text for macOS",
   "main": "dist/main/main.js",
   "scripts": {
@@ -11,11 +11,11 @@
     "build": "npm run build:renderer && npm run build:main",
     "build:renderer": "vite build",
     "build:main": "tsc -p tsconfig.main.json",
-    "pack": "npm run build && electron-builder --mac --dir",
-    "dist": "npm run build && electron-builder --mac",
+    "pack": "npm run whisper:build && npm run build && electron-builder --mac --dir",
+    "dist": "npm run whisper:build && npm run build && electron-builder --mac",
     "whisper:download": "node node_modules/nodejs-whisper/dist/downloadModel.js",
-    "whisper:build": "cd node_modules/nodejs-whisper/cpp/whisper.cpp && cmake -B build -DGGML_METAL=OFF -DWHISPER_ACCELERATE=ON && cmake --build build --config Release",
-    "postinstall": "electron-rebuild -f -w better-sqlite3,uiohook-napi",
+    "whisper:build": "cd node_modules/nodejs-whisper/cpp/whisper.cpp && cmake -B build -DGGML_METAL=ON -DWHISPER_ACCELERATE=ON -DWHISPER_BUILD_EXAMPLES=ON -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release --parallel",
+    "postinstall": "electron-rebuild -f -w better-sqlite3,uiohook-napi && (npm run whisper:build || echo '⚠ whisper-cli build skipped — cmake not found. Run npm run whisper:build once cmake/Xcode CLT is installed.')",
     "prestart": "npm run build",
     "start": "ELECTRON_RUN_AS_NODE= NODE_ENV=production electron ."
   },
